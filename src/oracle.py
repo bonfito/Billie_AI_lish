@@ -6,7 +6,7 @@ class MusicOracle:
     def __init__(self):
         # Definiamo la Rete Neurale (MLP)
         self.model = MLPRegressor(
-            hidden_layer_sizes=(64, 32), 
+            hidden_layer_sizes=(128, 64), #preferito 128-64 a 64-32
             activation='relu', 
             solver='adam', 
             warm_start=True, # Permette l'apprendimento continuo
