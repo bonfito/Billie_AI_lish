@@ -185,17 +185,8 @@ def fetch_history():
     df_processed[cols_to_save].to_csv(processed_path, index=False)
     
     print("-" * 30)
-    print(f"[SUCCESS] Dati processati (0-1) salvati in: {processed_path}")
+    print(f"Dati processati (0-1) salvati in: {processed_path}")
     
-    
-    print("\nAnteprima Confronto (Grezzo vs Processato):")
-    print(f"{'Nome':<20} | {'Tempo (BPM)':<12} -> {'Tempo (0-1)':<12}")
-    print("-" * 50)
-    for i in range(min(5, len(df))):
-        name = df.iloc[i]['name'][:18]
-        raw_bpm = df.iloc[i]['tempo']
-        proc_bpm = df_processed.iloc[i]['tempo']
-        print(f"{name:<20} | {raw_bpm:<12.1f} -> {proc_bpm:<12.4f}")
 
 if __name__ == "__main__":
     fetch_history()
