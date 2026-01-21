@@ -2,63 +2,59 @@ import os
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import pandas as pd
-import joblib
-import re
-import numpy as np
+import requests
 from dotenv import load_dotenv
+import time
 
 load_dotenv()
 
-def clean_string(text):
+def get_reccobeats_track_info(spotify_ids):
     """
-    Pulisce le stringhe per facilitare il confronto tra Spotify e Database.
-    Rimuove parentesi, scritte 'remaster', 'live', ecc.
+    Ottiene le informazioni delle tracce da Reccobeats usando gli Spotify IDs.
+    Ritorna un dizionario {spotify_id: reccobeats_id}
     """
-    if not isinstance(text, str): return ""
-    text = text.lower()
-    # Rimuove contenuto tra parentesi tonde e quadre
-    text = re.sub(r'\s*[\(\[].*?[\)\]]', '', text)
-    # Rimuove trattini e tutto cio' che segue (spesso versioni/remaster)
-    text = re.sub(r'\s-.*', '', text)
-    return text.strip()
-
-def fetch_history():
-    # 1. CARICAMENTO DATABASE LOCALE
-    db_path = os.path.join("data", "tracks_db.csv")
-    
-    if not os.path.exists(db_path):
-        print(f"[ERRORE] Il file {db_path} non esiste.")
-        return
-
-    print("[INFO] Caricamento database locale in memoria...")
+    # Converte la lista in stringa separata da virgole
+    ids_str = ','.join(spotify_ids)
+    url = f"https://api.reccobeats.com/v1/track?ids={ids_str}"
     
     try:
-        # Carichiamo il dataset
-        local_db = pd.read_csv(db_path)
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
         
-        # Creiamo colonne di servizio per la ricerca (versioni pulite dei nomi)
-        # Questo non modifica i dati originali, serve solo per il match
-        local_db['match_title'] = local_db['name'].astype(str).apply(clean_string)
-        # Per l'artista prendiamo solo il primo nome prima della virgola e puliamo
-        local_db['match_artist'] = local_db['artists'].astype(str).apply(lambda x: clean_string(x.split(',')[0]))
+        # Crea mappatura spotify_id -> reccobeats_id
+        mapping = {}
+        if 'content' in data:
+            for track in data['content']:
+                # Estrae lo Spotify ID dall'href
+                href = track.get('href', '')
+                if '/track/' in href:
+                    spotify_id = href.split('/track/')[-1]
+                    reccobeats_id = track.get('id')
+                    if reccobeats_id:
+                        mapping[spotify_id] = reccobeats_id
         
-        # Calcoliamo la media globale per i casi in cui la canzone non si trova
-        features_cols = ['energy', 'valence', 'danceability', 'tempo', 'loudness', 'speechiness', 'acousticness', 'instrumentalness', 'liveness']
-        # Filtriamo solo le colonne che esistono effettivamente nel CSV
-        available_feats = [c for c in features_cols if c in local_db.columns]
-        
-        if not available_feats:
-            print("[ERRORE] Il dataset non contiene le colonne audio necessarie.")
-            return
-
-        db_means = local_db[available_feats].mean(numeric_only=True)
-        print(f"[INFO] Database indicizzato. Righe totali: {len(local_db)}")
-        
+        return mapping
     except Exception as e:
-        print(f"[ERRORE] Lettura database fallita: {e}")
-        return
+        print(f"[ERRORE] Chiamata Reccobeats fallita: {e}")
+        return {}
 
-    # 2. CONNESSIONE A SPOTIFY
+def get_audio_features(reccobeats_id):
+    """
+    Ottiene le audio features di una traccia usando l'ID di Reccobeats.
+    """
+    url = f"https://api.reccobeats.com/v1/track/{reccobeats_id}/audio-features"
+    
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        print(f"[WARNING] Audio features non disponibili per {reccobeats_id}: {e}")
+        return None
+
+def fetch_history():
+    # 1. CONNESSIONE A SPOTIFY
     scope = "user-read-recently-played"
     sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
         scope=scope,
@@ -74,99 +70,94 @@ def fetch_history():
         print("[WARNING] Cronologia Spotify vuota.")
         return
 
-    # 3. PROCESSO DI MATCHING
-    final_tracks = []
-    matches_found = 0
+    # 2. ESTRAZIONE SPOTIFY IDs
+    spotify_ids = []
+    tracks_data = []
     
-    print(f"[INFO] Inizio analisi di {len(results['items'])} brani...")
-
     for item in results['items']:
         track = item['track']
-        raw_name = track['name']
-        raw_artist = track['artists'][0]['name']
-        
-        # Dati base
-        track_entry = {
+        spotify_ids.append(track['id'])
+        tracks_data.append({
             'id': track['id'],
-            'name': raw_name,
-            'artist': raw_artist,
+            'name': track['name'],
+            'artist': track['artists'][0]['name'],
             'played_at': item['played_at']
-        }
-        
-        # Pulizia input per la ricerca
-        search_title = clean_string(raw_name)
-        search_artist = clean_string(raw_artist)
+        })
+    
+    print(f"[INFO] Trovate {len(spotify_ids)} tracce. Inizio recupero dati da Reccobeats...")
 
-        # Logica di ricerca nel DataFrame
-        # A. Filtra per titolo
-        candidates = local_db[local_db['match_title'] == search_title]
+    # 3. OTTIENI MAPPING SPOTIFY ID -> RECCOBEATS ID
+    # Dividiamo in batch di 10 per non sovraccaricare l'API
+    batch_size = 10
+    all_mappings = {}
+    
+    for i in range(0, len(spotify_ids), batch_size):
+        batch = spotify_ids[i:i+batch_size]
+        print(f"[INFO] Processing batch {i//batch_size + 1}/{(len(spotify_ids)-1)//batch_size + 1}...")
         
-        best_match = None
+        mapping = get_reccobeats_track_info(batch)
+        all_mappings.update(mapping)
         
-        if not candidates.empty:
-            # B. Se ci sono candidati, filtra per artista
-            # Verifica se la stringa artista del DB contiene l'artista cercato
-            art_match = candidates[candidates['match_artist'].str.contains(search_artist, regex=False)]
+        # Piccola pausa per rispettare i rate limits
+        time.sleep(0.5)
+    
+    print(f"[INFO] Trovate {len(all_mappings)}/{len(spotify_ids)} tracce su Reccobeats.")
+
+    # 4. OTTIENI AUDIO FEATURES
+    final_tracks = []
+    features_found = 0
+    
+    for track_info in tracks_data:
+        spotify_id = track_info['id']
+        track_entry = track_info.copy()
+        
+        # Controlla se abbiamo l'ID di Reccobeats per questa traccia
+        if spotify_id in all_mappings:
+            reccobeats_id = all_mappings[spotify_id]
             
-            if not art_match.empty:
-                best_match = art_match.iloc[0]
+            # Ottieni le audio features
+            features = get_audio_features(reccobeats_id)
+            
+            if features:
+                # Aggiungi tutte le features al track_entry
+                track_entry.update(features)
+                track_entry['source'] = 'reccobeats'
+                features_found += 1
             else:
-                # Se il titolo corrisponde ma l'artista no, prendiamo comunque il primo risultato
-                # (Gestisce casi di feat. non elencati o variazioni minori)
-                best_match = candidates.iloc[0]
-        
-        # Assegnazione valori
-        if best_match is not None:
-            # Match trovato
-            for f in available_feats:
-                track_entry[f] = best_match[f]
-            track_entry['source'] = 'database'
-            matches_found += 1
+                track_entry['source'] = 'not_found'
         else:
-            # Match non trovato (Fallback)
-            for f in available_feats:
-                track_entry[f] = db_means[f]
-            track_entry['source'] = 'fallback_mean'
-
+            track_entry['source'] = 'not_in_reccobeats'
+        
         final_tracks.append(track_entry)
+        
+        # Piccola pausa tra le chiamate
+        time.sleep(0.3)
 
-    # 4. NORMALIZZAZIONE E SALVATAGGIO
-    print(f"[INFO] Matching completato. Trovati nel DB: {matches_found}/{len(final_tracks)}")
+    # 5. SALVATAGGIO
+    print(f"[INFO] Processo completato. Audio features trovate: {features_found}/{len(final_tracks)}")
     
     df_out = pd.DataFrame(final_tracks)
     
-    # Normalizzazione (Se disponibile lo scaler addestrato)
-    scaler_path = os.path.join("data", "scaler.save")
-    if os.path.exists(scaler_path):
-        try:
-            print("[INFO] Applicazione normalizzazione (scaler)...")
-            scaler = joblib.load(scaler_path)
-            
-            # Attenzione: lo scaler si aspetta le colonne nello stesso ordine dell'addestramento
-            # Qui assumiamo che available_feats copra le feature dello scaler
-            if set(available_feats).issubset(df_out.columns):
-                df_out[available_feats] = scaler.transform(df_out[available_feats])
-        except Exception as e:
-            print(f"[WARNING] Errore durante la normalizzazione: {e}")
-            print("[INFO] I dati verranno salvati senza normalizzazione.")
-    else:
-        print("[INFO] Scaler non trovato. I dati verranno salvati grezzi.")
-
     # Salvataggio su CSV
     output_path = os.path.join("data", "user_history.csv")
+    os.makedirs("data", exist_ok=True)
     
-    # Ordiniamo le colonne per pulizia
-    cols_order = ['id', 'name', 'artist', 'played_at', 'source'] + available_feats
-    final_cols = [c for c in cols_order if c in df_out.columns]
-    
-    df_out[final_cols].to_csv(output_path, index=False)
+    df_out.to_csv(output_path, index=False)
     
     print(f"[SUCCESS] File salvato correttamente: {output_path}")
     
-    # Anteprima testuale
+    # Anteprima
     pd.set_option('display.max_rows', 5)
+    pd.set_option('display.max_columns', 10)
     print("\nAnteprima dati:")
-    print(df_out[['name', 'source', 'energy']].head())
+    print(df_out[['name', 'artist', 'source']].head(10))
+    
+    # Mostra alcune features se disponibili
+    feature_cols = ['energy', 'valence', 'danceability', 'tempo']
+    available = [c for c in feature_cols if c in df_out.columns]
+    if available:
+        print("\nAlcune audio features:")
+        print(df_out[['name'] + available].head(5))
 
 if __name__ == "__main__":
     fetch_history()
