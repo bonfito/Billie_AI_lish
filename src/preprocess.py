@@ -38,6 +38,14 @@ def process_data():
     # Conversione numerica sicura della popolarità
     df['popularity'] = pd.to_numeric(df['popularity'], errors='coerce').fillna(0).astype(float)
 
+    # --- NUOVA FUNZIONE: GESTIONE KEY E MODE ---
+    # Convertiamo in interi e gestiamo i buchi (NaN diventa -1)
+    if 'key' in df.columns:
+        df['key'] = pd.to_numeric(df['key'], errors='coerce').fillna(-1).astype(int)
+    if 'mode' in df.columns:
+        df['mode'] = pd.to_numeric(df['mode'], errors='coerce').fillna(-1).astype(int)
+    # -------------------------------------------
+
     # =========================================================================
     # FASE DI RECUPERO DATI (Imputazione basata su Artista)
     # =========================================================================
@@ -100,7 +108,10 @@ def process_data():
     # =========================================================================
     audio_features = ['energy', 'valence', 'danceability', 'tempo', 'loudness', 
                       'speechiness', 'acousticness', 'instrumentalness', 'liveness']
-    metadata = ['id', 'name', 'artist', 'popularity', 'year', 'genres']
+    
+    # MODIFICA: Aggiunte 'key' e 'mode' ai metadati da conservare
+    # NON le mettiamo in audio_features perché non vanno scalate col MinMaxScaler
+    metadata = ['id', 'name', 'artist', 'popularity', 'year', 'genres', 'key', 'mode']
     
     # Selezione finale colonne
     cols_to_keep = metadata + audio_features
