@@ -1,0 +1,20 @@
+[33m97e08c9[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mdata&vector[m[33m, [m[1;31morigin/dev3[m[33m, [m[1;32mdev3[m[33m)[m HEAD@{0}: checkout: moving from dev3 to data&vector
+[33m97e08c9[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mdata&vector[m[33m, [m[1;31morigin/dev3[m[33m, [m[1;32mdev3[m[33m)[m HEAD@{1}: pull --ff --recurse-submodules --progress origin: Fast-forward
+[33m83bd7ef[m HEAD@{2}: checkout: moving from data&vector to dev3
+[33m97e08c9[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mdata&vector[m[33m, [m[1;31morigin/dev3[m[33m, [m[1;32mdev3[m[33m)[m HEAD@{3}: reset: moving to HEAD
+[33m97e08c9[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mdata&vector[m[33m, [m[1;31morigin/dev3[m[33m, [m[1;32mdev3[m[33m)[m HEAD@{4}: pull origin dev3: Fast-forward
+[33m66a3feb[m[33m ([m[1;31morigin/data&vector[m[33m)[m HEAD@{5}: pull origin data&vector: Fast-forward
+[33m1dbc317[m HEAD@{6}: reset: moving to HEAD
+[33m1dbc317[m HEAD@{7}: checkout: moving from data&vector to data&vector
+[33m1dbc317[m HEAD@{8}: checkout: moving from data&vector to data&vector
+[33m1dbc317[m HEAD@{9}: checkout: moving from ai-core to data&vector
+[33mf374bd3[m[33m ([m[1;31morigin/ai-core[m[33m, [m[1;32mai-core[m[33m)[m HEAD@{10}: commit: piccola accortezza
+[33mdd19526[m HEAD@{11}: checkout: moving from dev3 to ai-core
+[33m83bd7ef[m HEAD@{12}: checkout: moving from data&vector to dev3
+[33m1dbc317[m HEAD@{13}: reset: moving to HEAD
+[33m1dbc317[m HEAD@{14}: checkout: moving from main to data&vector
+[33m55a40e9[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{15}: checkout: moving from ai-core to main
+[33mdd19526[m HEAD@{16}: commit: Implementazione MLP e validazione Loss
+[33m55a40e9[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{17}: checkout: moving from main to ai-core
+[33m55a40e9[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{18}: commit: prima struttura per il secondo ruolo
+[33me89c029[m HEAD@{19}: clone: from https://github.com/bonfito/Billie_AI_lish.git

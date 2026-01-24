@@ -4,7 +4,7 @@ from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import MinMaxScaler
 
 class SongRecommender:
-    def __init__(self, dataset_path='clean_db.csv'):
+    def __init__(self, dataset_path='track_db.csv'):
         # 1. Caricamento del Dataset Reale
         try:
             self.df = pd.read_csv(dataset_path)

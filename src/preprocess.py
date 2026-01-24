@@ -16,6 +16,7 @@ def process_data():
         df = pd.read_csv(input_path)
     else:
         print("file track_db.csv non trovato")
+        return 
     
     #seleziono audio features
     features = ['energy', 'valence', 'danceability', 'tempo', 'loudness', 'speechiness', 'acousticness', 'instrumentalness', 'liveness'] 

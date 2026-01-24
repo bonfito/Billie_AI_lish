@@ -3,37 +3,54 @@ import numpy as np
 from oracle import MusicOracle
 
 def run_prediction():
-    print(" Caricamento cronologia ascolti (Spotify + ReccoBeats)...")
+    print("Analisi cronologia (Audio + Artisti)...")
     
-    # Il Ruolo 1 deve generare questo file nel branch data&vector
     try:
-        df = pd.read_csv('data/last_50_songs_features.csv')
+        # Carichiamo il file processato (ora ci aspettiamo solo l'artista come metadato)
+        df = pd.read_csv('data/user_history_processed.csv')
     except FileNotFoundError:
-        print(" Errore: File CSV non trovato. Chiedi al Ruolo 1 di generarlo!")
+        print("Errore: Esegui fetch_history.py prima!")
         return
 
-    # Selezioniamo solo le colonne numeriche (le 9 feature)
-    # Assicurati che l'ordine delle colonne nel CSV sia quello corretto
-    feature_columns = ['energy', 'valence', 'danceability', 'acousticness', 
-                       'instrumentalness', 'liveness', 'speechiness', 'loudness', 'tempo']
+    # Le 9 feature audio standard
+    feature_columns = ['energy', 'valence', 'danceability', 'tempo', 'loudness', 
+                       'speechiness', 'acousticness', 'instrumentalness', 'liveness']
     
-    history_data = df[feature_columns].values
+    # Verifichiamo che le colonne esistano nel DF prima di procedere
+    available_cols = [c for c in feature_columns if c in df.columns]
+    history_data = df[available_cols].values
     
-    # Inizializza l'Oracle
+    # Analisi metadati (Solo Artist, rimosso Genre)
+    top_artist = "Unknown"
+    if 'artist' in df.columns:
+        top_artist = df['artist'].mode()[0]
+    
     oracle = MusicOracle()
-    # Qui potresti caricare i pesi se li hai salvati: 
-    # oracle.load_state_dict(torch.load('model_weights.pth'))
     
-    print(f"🧬 Elaborazione di {len(history_data)} brani...")
-    next_dna = oracle.predict_next_dna(history_data)
+    print(f"🧬 Elaborazione DNA basata su {len(history_data)} brani...")
+    print(f"⭐ Artista preferito recente: {top_artist}")
     
-    print("\n✨ PROSSIMA CANZONE PREDETTA (DNA):")
-    for name, value in zip(feature_columns, next_dna):
+    # Predizione del prossimo DNA musicale tramite l'Oracle
+    # Assicurati che il metodo si chiami 'predict_next_dna' o 'predict_target' nel tuo oracle.py
+    try:
+        next_dna = oracle.predict_next_dna(history_data)
+    except AttributeError:
+        # Fallback se il metodo si chiama diversamente
+        next_dna = oracle.predict_target(history_data[-1] if len(history_data) > 0 else np.array([0.5]*9))
+    
+    print("\n✨ TARGET DNA PREDETTO:")
+    for name, value in zip(available_cols, next_dna):
         print(f"- {name:16}: {value:.4f}")
         
-    print("\n🚀 Ora passa questo vettore al Ruolo 3 per la ricerca KNN!")
-    # Salvataggio opzionale per il Ruolo 3
-    np.save('data/predicted_dna.npy', next_dna)
+    # Salviamo il DNA e l'artista suggerito per il Recommender (Ruolo 3)
+    prediction_package = {
+        'dna': next_dna,
+        'suggested_artist': top_artist
+    }
+    
+    # Salvataggio in formato .npy per essere letto facilmente dagli altri moduli
+    np.save('data/prediction_package.npy', prediction_package)
+    print("\n🚀 Pacchetto predizione salvato (DNA + Artista).")
 
 if __name__ == "__main__":
     run_prediction()

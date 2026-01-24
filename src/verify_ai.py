@@ -34,9 +34,9 @@ def test_ai_convergence():
     print(f"Loss Finale:   {last_loss:.6f}")
     
     if last_loss < first_loss:
-        print("✅ SUCCESSO: L'IA sta imparando! L'errore è diminuito.")
+        print(" SUCCESSO: L'IA sta imparando! L'errore è diminuito.")
     else:
-        print("⚠️ ATTENZIONE: La loss non diminuisce. Controlla i parametri dell'MLP.")
+        print(" ATTENZIONE: La loss non diminuisce. Controlla i parametri dell'MLP.")
 
 if __name__ == "__main__":
     test_ai_convergence()
