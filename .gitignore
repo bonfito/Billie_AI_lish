@@ -19,3 +19,5 @@ Gemfile.lock
 data/tracks_db.csv
 data/tracks_processed.csv
 .env
+data/tracs_dbFinale.csv
+data/tracks_dbFinale.csv
