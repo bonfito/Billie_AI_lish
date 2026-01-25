@@ -200,6 +200,10 @@ def fetch_history():
                 features = get_audio_features(recco_id)
                 
                 if features:
+                    # --- FIX: RIMUOVIAMO L'ID DI RECCOBEATS ---
+                    features.pop('id', None) # Fondamentale per non sovrascrivere l'ID Spotify
+                    # ------------------------------------------
+
                     track_info.update(features)
                     track_info['source'] = 'reccobeats'
                     features_found = True
