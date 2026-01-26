@@ -94,3 +94,39 @@ def get_track_cover(track_id):
         return sp.track(track_id)['album']['images'][1]['url']
     except:
         return None
+    
+def get_track_details(track_id):
+    """
+    Recupera il GENERE (dall'artista) e la POPOLARITÀ (dalla traccia) 
+    aggiornati in tempo reale tramite API Spotify.
+    """
+    try:
+        sp = get_spotify_client()
+        if not sp:
+            return "unknown", 0
+
+        # 1. Recupero info traccia (per ID artista e popolarità traccia)
+        track_info = sp.track(track_id)
+        if not track_info:
+            return "unknown", 0
+        
+        popularity = track_info.get('popularity', 0)
+        # Prendiamo il primo artista della lista
+        artist_id = track_info['artists'][0]['id']
+
+        # 2. Recupero info artista (i generi sono legati all'artista, non alla traccia)
+        artist_info = sp.artist(artist_id)
+        genres = artist_info.get('genres', [])
+
+        # 3. Selezione genere
+        if genres:
+            # Prendiamo il primo genere della lista (il più rappresentativo)
+            main_genre = genres[0]
+            return main_genre, popularity
+        else:
+            # Se l'artista non ha generi mappati, usiamo un fallback
+            return "pop", popularity
+
+    except Exception as e:
+        print(f" Errore get_track_details: {e}")
+        return "unknown", 0
