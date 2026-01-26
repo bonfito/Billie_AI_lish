@@ -23,3 +23,8 @@ user_history.csv
 data/tracs_dbFinale.csv
 data/tracks_dbFinale.csv
 .cache
+.cache
+.cache
+data/audio_features_cache.csv
+data/scaler.save
+data/user_history.csv
