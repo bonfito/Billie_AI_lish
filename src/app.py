@@ -4,15 +4,30 @@ import plotly.express as px
 import numpy as np
 import os
 import time
+import joblib
+from dotenv import load_dotenv
+
+# Import dai moduli locali
 from recommender import SongRecommender
 from oracle import MusicOracle 
 from utils import calculate_avalanche_context
 from spotify_client import add_track_to_playlist, get_track_details
+from fetch_userhistory import fetch_history
 
 # --- CONFIGURAZIONE PERCORSI ---
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 HISTORY_PATH = os.path.normpath(os.path.join(CURRENT_DIR, '..', 'data', 'user_history.csv'))
 BLACKLIST_PATH = os.path.normpath(os.path.join(CURRENT_DIR, '..', 'data', 'blacklist.txt'))
+SCALER_PATH = os.path.normpath(os.path.join(CURRENT_DIR, '..', 'data', 'scaler.save'))
+
+# Carica variabili ambiente
+load_dotenv()
+
+# --- CARICAMENTO SCALER (Per denormalizzare Tempo e Loudness) ---
+try:
+    scaler = joblib.load(SCALER_PATH)
+except Exception as e:
+    scaler = None
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(
@@ -149,7 +164,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- FUNZIONE GENERAZIONE ---
-def generate_new_recommendation():
+def generate_new_recommendation(manual_target=None):
     if st.session_state.history_df is not None:
         try:
             recs_df, pred_vector = st.session_state.recommender.recommend(st.session_state.history_df, k=20)
@@ -157,7 +172,10 @@ def generate_new_recommendation():
             st.session_state.current_track = best_song.to_dict()
             st.session_state.predicted_vector = pred_vector.flatten()
             st.session_state.suggestion_made = True
+            
+            if 'past_track_ids' not in st.session_state: st.session_state.past_track_ids = []
             st.session_state.past_track_ids.append(str(best_song['id']))
+            
             return True
         except Exception as e:
             st.error(f"Errore generazione: {e}")
@@ -208,7 +226,7 @@ if 'history_df' not in st.session_state:
 st.markdown("<div class='main-title'>BILLIE AI-LISH</div>", unsafe_allow_html=True)
 st.markdown("<div class='subtitle'>Artificial Music Agent</div>", unsafe_allow_html=True)
 
-# --- SIDEBAR ---
+# --- SIDEBAR (CON SLIDER 0-100) ---
 st.sidebar.header("CONTROL ROOM")
 st.sidebar.caption(f"Genre: {st.session_state.get('top_genre', '-')} | Artist: {st.session_state.get('top_artist', '-')}")
 st.sidebar.markdown("---")
@@ -220,24 +238,29 @@ if st.session_state.get('current_context') is not None:
         ctx = st.session_state.current_context
         
         st.markdown("**VIBE**")
-        n_en = st.slider("Energy", 0.0, 1.0, float(np.clip(ctx[0], 0, 1)))
-        n_val = st.slider("Valence (Mood)", 0.0, 1.0, float(np.clip(ctx[1], 0, 1)))
-        n_dan = st.slider("Danceability", 0.0, 1.0, float(np.clip(ctx[2], 0, 1)))
+        n_en = st.slider("Energy", 0, 100, int(np.clip(ctx[0], 0, 1) * 100))
+        n_val = st.slider("Valence (Mood)", 0, 100, int(np.clip(ctx[1], 0, 1) * 100))
+        n_dan = st.slider("Danceability", 0, 100, int(np.clip(ctx[2], 0, 1) * 100))
         
         st.markdown("**SOUND**")
-        n_tem = st.slider("Tempo (BPM)", 40.0, 200.0, float(np.clip(ctx[3], 40, 200)))
+        # Tempo sempre in BPM per coerenza fisica
+        n_tem = st.slider("Tempo (BPM)", 40.0, 200.0, float(np.clip(ctx[3], 40, 200))) 
         n_lou = st.slider("Loudness (dB)", -60.0, 0.0, float(np.clip(ctx[4], -60, 0)))
         
         st.markdown("**TEXTURE**")
         n_spe = st.slider("Speechiness", 0.0, 1.0, float(np.clip(ctx[5], 0, 1)))
-        n_aco = st.slider("Acousticness", 0.0, 1.0, float(np.clip(ctx[6], 0, 1)))
-        n_ins = st.slider("Instrumentalness", 0.0, 1.0, float(np.clip(ctx[7], 0, 1)))
-        n_liv = st.slider("Liveness", 0.0, 1.0, float(np.clip(ctx[8], 0, 1)))
+        n_aco = st.slider("Acousticness", 0, 100, int(np.clip(ctx[6], 0, 1) * 100))
+        n_ins = st.slider("Instrumentalness", 0, 100, int(np.clip(ctx[7], 0, 1) * 100))
+        n_liv = st.slider("Liveness", 0, 100, int(np.clip(ctx[8], 0, 1) * 100))
         
         submitted = st.form_submit_button("APPLICA & RIGENERA")
         
         if submitted:
-            new_ctx = np.array([n_en, n_val, n_dan, n_tem, n_lou, n_spe, n_aco, n_ins, n_liv])
+            new_ctx = np.array([
+                n_en / 100.0, n_val / 100.0, n_dan / 100.0,
+                n_tem, n_lou, n_spe,
+                n_aco / 100.0, n_ins / 100.0, n_liv / 100.0
+            ])
             st.session_state.current_context = new_ctx
             with st.spinner("Modulazione frequenze AI in corso..."):
                 if generate_new_recommendation():
@@ -245,6 +268,14 @@ if st.session_state.get('current_context') is not None:
                     st.rerun()
 else:
     st.sidebar.warning("Inizializza la history per attivare l'equalizzatore.")
+    if st.sidebar.button("🔄 Aggiorna Cronologia"):
+        with st.spinner("Scaricamento dati..."):
+            try:
+                fetch_history()
+                load_data.clear()
+                st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"Errore: {e}")
 
 # --- GENERAZIONE ---
 c1, col_gen, c3 = st.columns([1, 2, 1])
@@ -262,7 +293,6 @@ if st.session_state.suggestion_made and st.session_state.current_track:
     
     col_player, col_stats = st.columns([2, 1]) 
     
-    # 1. Colonna Sinistra: Player Spotify
     with col_player:
         if pd.notna(tid):
             url = f"https://open.spotify.com/embed/track/{tid}?utm_source=generator&theme=0"
@@ -270,36 +300,50 @@ if st.session_state.suggestion_made and st.session_state.current_track:
         else:
             st.warning("Anteprima non disponibile per questa traccia.")
 
-    # 2. Colonna Destra: Feature List (Track DNA)
+    # 2. Colonna Destra: Feature List (Track DNA - Tunebat Style)
     with col_stats:
-        display_feats = ['energy', 'valence', 'danceability', 'tempo', 'loudness', 'speechiness', 'acousticness', 'instrumentalness', 'liveness']
+        audio_cols = ['energy', 'valence', 'danceability', 'tempo', 'loudness', 'speechiness', 'acousticness', 'instrumentalness', 'liveness']
         
+        # --- PREPARAZIONE DATI REALI (DENORMALIZZAZIONE SICURA) ---
+        # 1. Recuperiamo i dati normalizzati (0-1) che sono attualmente in 'track'
+        norm_vector = np.array([track.get(c, 0) for c in audio_cols]).reshape(1, -1)
+        
+        # 2. Proviamo a ottenere i dati fisici (BPM, dB) tramite lo scaler
+        real_data_map = {}
+        if scaler:
+            try:
+                # Inversa per ottenere BPM e dB corretti
+                real_vector = scaler.inverse_transform(norm_vector)[0]
+                real_data_map = dict(zip(audio_cols, real_vector))
+            except:
+                pass # Se fallisce, useremo fallback
+        
+        display_feats = audio_cols 
         html_stats = "<div class='feature-list'><div style='color:#fff; font-weight:900; margin-bottom:10px; text-transform:uppercase; letter-spacing:2px; font-size:0.9rem;'>Track DNA</div>"
         
         for f in display_feats:
-            val = track.get(f, 0)
+            # Valore normalizzato (0-1) - Lo usiamo per le percentuali
+            val_norm = track.get(f, 0)
             
-            # --- LOGICA DI DENORMALIZZAZIONE (SOLO PER DISPLAY) ---
+            # --- LOGICA DI VISUALIZZAZIONE TUNEBAT ---
             if f == 'tempo':
-                # Convertiamo da 0-1 a 0-200 BPM (stima)
-                real_val = val * 200
-                val_str = f"{int(real_val)} BPM"
-            
+                # Preferiamo il valore reale dallo scaler (BPM)
+                # Fallback: stimiamo 40-200 bpm se scaler manca
+                bpm = real_data_map.get(f, val_norm * 160 + 40)
+                val_str = f"{int(bpm)} BPM"
+                
             elif f == 'loudness':
-                # Convertiamo da 0-1 a -60dB - 0dB
-                # Esempio: 0.9 diventa -6dB
-                real_val = (val * 60) - 60
-                val_str = f"{real_val:.1f} dB"
-            
-            elif f == 'instrumentalness':
-                # Lo lasciamo 0-1, ma se è molto basso scriviamo "Vocal" per chiarezza
-                val_str = f"{val:.2f}"
-            
+                # Preferiamo il valore reale dallo scaler (dB)
+                # Fallback: stimiamo -60 a 0 dB
+                db = real_data_map.get(f, val_norm * 60 - 60)
+                val_str = f"{db:.1f} dB"
+                
             else:
-                # Tutte le altre feature (Energy, Valence, etc.) vanno bene da 0 a 1
-                val_str = f"{val:.2f}"
+                # Per tutte le altre feature (Energy, Dance, etc.)
+                # TUNEBAT STYLE: Moltiplichiamo per 100 e mostriamo numero intero
+                # Es: 0.72 -> 72
+                val_str = f"{int(val_norm * 100)}"
             
-            # Generazione HTML
             html_stats += f"<div class='feature-item'><span class='feat-label'>{f.capitalize()}</span><span class='feat-val'>{val_str}</span></div>"
             
         html_stats += "</div>"
@@ -321,25 +365,20 @@ if st.session_state.suggestion_made and st.session_state.current_track:
                 cols = st.session_state.recommender.audio_cols
                 feats = np.array([track[k] for k in cols])
                 
-                # 1. Allenamento
                 st.session_state.oracle.train_incremental(st.session_state.current_context, feats)
                 st.session_state.song_count += 1
                 st.session_state.current_context = calculate_avalanche_context(st.session_state.current_context, feats, st.session_state.song_count)
                 
-                # 2. Spotify
                 if tid: add_track_to_playlist(tid)
                 
-                # 3. Blacklist
                 with open(BLACKLIST_PATH, "a") as f: 
                     f.write(f"{track['id']}\n")
                 
-                # 4. History CSV
                 new_row = {'id': track['id'], 'name': track['name'], 'artist': track['artist'], 'genres': real_g, 'popularity': real_p, 'year': track.get('year'), **{k: track[k] for k in cols}}
                 df_new = pd.DataFrame([new_row])
                 df_new.to_csv(HISTORY_PATH, mode='a', header=not os.path.exists(HISTORY_PATH), index=False)
                 st.session_state.history_df = pd.concat([st.session_state.history_df, df_new], ignore_index=True)
                 
-                # 5. Generazione
                 generate_new_recommendation()
                 status.update(label="Salvato e Blacklistato!", state="complete")
             st.rerun()
