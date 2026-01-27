@@ -18,7 +18,7 @@ _site/
 Gemfile.lock
 data/tracks_db.csv
 data/tracks_processed.csv
-user_history.csv
+data/user_history.csv
 .env
 data/tracs_dbFinale.csv
 data/tracks_dbFinale.csv

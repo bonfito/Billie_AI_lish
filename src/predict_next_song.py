@@ -27,8 +27,8 @@ def run_prediction():
     
     oracle = MusicOracle()
     
-    print(f"🧬 Elaborazione DNA basata su {len(history_data)} brani...")
-    print(f"⭐ Artista preferito recente: {top_artist}")
+    print(f" Elaborazione DNA basata su {len(history_data)} brani...")
+    print(f" Artista preferito recente: {top_artist}")
     
     # Predizione del prossimo DNA musicale tramite l'Oracle
     # Assicurati che il metodo si chiami 'predict_next_dna' o 'predict_target' nel tuo oracle.py
@@ -50,7 +50,7 @@ def run_prediction():
     
     # Salvataggio in formato .npy per essere letto facilmente dagli altri moduli
     np.save('data/prediction_package.npy', prediction_package)
-    print("\n🚀 Pacchetto predizione salvato (DNA + Artista).")
+    print("\n Pacchetto predizione salvato (DNA + Artista).")
 
 if __name__ == "__main__":
     run_prediction()
