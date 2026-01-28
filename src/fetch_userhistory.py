@@ -170,8 +170,11 @@ def fetch_history():
     audio_cache_map = load_audio_cache()
     print(f"Cache Audio caricata: {len(audio_cache_map)} canzoni in memoria.")
 
-    # 2. Connessione Spotify (Aggiornato scope per Top Tracks)
-    scope = "user-read-recently-played user-top-read"
+    df_existing = pd.DataFrame()
+    last_timestamp = pd.Timestamp.min.tz_localize('UTC')
+
+    # 2. Connessione Spotify
+    scope = "user-read-recently-played"
     sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
         scope=scope,
         client_id=os.getenv("SPOTIPY_CLIENT_ID"),
@@ -179,80 +182,70 @@ def fetch_history():
         redirect_uri=os.getenv("SPOTIPY_REDIRECT_URI")
     ))
 
-    print("Scaricamento dati Spotify (Recenti + Top Tracks)...")
-    
-    # --- LOGICA MULTI-SORGENTE E PESI ---
-    # Usiamo un dizionario per aggregare i brani ed evitare duplicati
-    raw_tracks_map = {} 
-
-    def process_spotify_items(items, source_label, weight_increment, is_history=False):
-        for item in items:
-            # In history l'oggetto track è dentro 'track', in top tracks è l'oggetto stesso
-            track = item['track'] if is_history else item
-            if not track: continue
-            
-            t_id = track['id']
-            played_at = pd.to_datetime(item['played_at']) if is_history else None
-            
-            # Se è la prima volta che vediamo il brano
-            if t_id not in raw_tracks_map:
-                # Recuperiamo info base (se disponibili in locale)
-                local_info = local_db_map.get(t_id, {'genre': 'unknown', 'popularity': 0})
+    if os.path.exists(HISTORY_FILE):
+        try:
+            df_existing = pd.read_csv(HISTORY_FILE)
+            if not df_existing.empty and 'played_at' in df_existing.columns:
+                df_existing['played_at'] = pd.to_datetime(df_existing['played_at'])
+                last_timestamp = df_existing['played_at'].max()
+                print(f"Cronologia esistente trovata: {len(df_existing)} brani.")
+                print(f"Ultimo ascolto registrato: {last_timestamp}")
                 
-                raw_tracks_map[t_id] = {
-                    'id': t_id,
-                    'name': track['name'],
-                    'artist': track['artists'][0]['name'],
-                    'genres': local_info.get('genre', 'unknown'),
-                    'popularity': local_info.get('popularity', 0),
-                    'played_at': played_at,
-                    'weight': 0.0,
-                    'sources': set()
-                }
-            
-            # Aggiorniamo peso e sorgenti
-            entry = raw_tracks_map[t_id]
-            entry['weight'] += weight_increment
-            entry['sources'].add(source_label)
-            
-            # Aggiorniamo il played_at se ne troviamo uno più recente (o se quello attuale è None)
-            if played_at:
-                if entry['played_at'] is None or played_at > entry['played_at']:
-                    entry['played_at'] = played_at
+                # --- RETROACTIVE UPDATE ---
+                # Aggiorniamo i metadati (Popolarità e Genere) anche per le vecchie canzoni
+                df_existing = enrich_metadata(df_existing, sp)
+                # --------------------------
+                
+        except Exception as e:
+            print(f"Errore lettura cronologia esistente: {e}")
+    else:
+        print("Nessuna cronologia precedente trovata. Creazione nuovo file.")
 
+    print("Scaricamento cronologia recente Spotify...")
     try:
-        # A. Recent History (Peso 2.0 - Mood Attuale)
-        results_recent = sp.current_user_recently_played(limit=50)
-        process_spotify_items(results_recent['items'], 'recent', 2.0, is_history=True)
-
-        # B. Short Term (4 settimane - Peso 1.5 - Ossessione Corrente)
-        results_short = sp.current_user_top_tracks(limit=50, time_range='short_term')
-        process_spotify_items(results_short['items'], 'short_term', 1.5)
-
-        # C. Medium Term (6 mesi - Peso 1.0 - Gusto Consolidato)
-        results_medium = sp.current_user_top_tracks(limit=50, time_range='medium_term')
-        process_spotify_items(results_medium['items'], 'medium_term', 1.0)
-
-        # D. Long Term (Anni - Peso 0.5 - Identità Storica)
-        results_long = sp.current_user_top_tracks(limit=50, time_range='long_term')
-        process_spotify_items(results_long['items'], 'long_term', 0.5)
-
+        results = sp.current_user_recently_played(limit=50)
     except Exception as e:
-        print(f"Errore chiamate API Spotify: {e}")
+        print(f"Errore connessione Spotify: {e}")
+        return
+    
+    if not results['items']:
+        print("Nessun brano trovato su Spotify.")
+        # Se abbiamo aggiornato i vecchi dati ma non ce ne sono di nuovi, salviamo comunque
+        if not df_existing.empty:
+            df_existing.to_csv(HISTORY_FILE, index=False)
+            print("Metadati aggiornati salvati.")
         return
 
-    # Convertiamo il dizionario in lista
-    tracks_to_process = list(raw_tracks_map.values())
+    # 3. Filtraggio nuovi brani (Incrementale)
+    tracks_to_process = []
     
-    # Formattiamo il campo 'sources' come stringa per il CSV
-    for t in tracks_to_process:
-        t['sources'] = ",".join(sorted(list(t['sources'])))
+    for item in results['items']:
+        played_at = pd.to_datetime(item['played_at'])
+        
+        # Se il brano è successivo all'ultimo salvataggio
+        if played_at > last_timestamp:
+            track = item['track']
+            t_id = track['id']
+            
+            # Nota: Qui mettiamo valori placeholder, verranno riempiti da enrich_metadata dopo
+            track_obj = {
+                'id': t_id,
+                'name': track['name'],
+                'artist': track['artists'][0]['name'],
+                'genres': 'unknown',
+                'popularity': 0,
+                'played_at': played_at
+            }
+            tracks_to_process.append(track_obj)
 
     if not tracks_to_process:
-        print("Nessun dato trovato da elaborare.")
+        print("Nessun nuovo ascolto da aggiungere.")
+        if not df_existing.empty:
+            df_existing.to_csv(HISTORY_FILE, index=False)
+            print("Metadati aggiornati salvati.")
         return
 
-    print(f"Totale brani unici identificati: {len(tracks_to_process)}")
+    print(f"Trovati {len(tracks_to_process)} nuovi ascolti da elaborare.")
 
     # 4. Arricchimento dati (Cache vs Reccobeats)
     final_new_tracks = []
@@ -265,10 +258,7 @@ def fetch_history():
         if t_id in audio_cache_map:
             cached_features = audio_cache_map[t_id]
             track_obj.update(cached_features)
-            # Nota: 'source' qui indicava l'origine dei dati tecnici, possiamo lasciarlo o sovrascriverlo.
-            # Nel tuo codice originale era 'cache_local'. Manteniamo la logica originale se serve debug, 
-            # ma abbiamo già la colonna 'sources' (es. recent,short_term) che è più importante per l'AI.
-            # Per non rompere nulla, lascio che track_obj abbia i dati cache.
+            track_obj['source'] = 'cache_local'
             final_new_tracks.append(track_obj)
         else:
             tracks_to_fetch_from_recco.append(track_obj)
@@ -303,7 +293,7 @@ def fetch_history():
                     # -------------------------
 
                     track_info.update(features)
-                    # track_info['source'] = 'reccobeats' # Opzionale, come da codice originale
+                    track_info['source'] = 'reccobeats'
                     features_found = True
                     
                     cache_entry = {'id': sp_id}
@@ -312,8 +302,7 @@ def fetch_history():
                     new_features_to_cache.append(cache_entry)
 
             if not features_found:
-                # track_info['source'] = 'features_missing'
-                pass
+                track_info['source'] = 'features_missing'
             
             final_new_tracks.append(track_info)
             time.sleep(0.05)
@@ -322,16 +311,18 @@ def fetch_history():
         save_to_cache(new_features_to_cache)
 
     if not final_new_tracks:
-        print("Nessun brano valido finale.")
+        # Salvataggio se avevamo solo aggiornamenti vecchi
+        if not df_existing.empty:
+             df_existing.to_csv(HISTORY_FILE, index=False)
         return
 
-    # Create DF
+    # Create DF New
     df_new = pd.DataFrame(final_new_tracks)
     
-    # --- ENRICH METADATA ---
-    # Scarichiamo popolarità e genere (per i brani che non li avevano in cache locale)
+    # --- ENRICH NEW TRACKS ---
+    # Scarichiamo popolarità e genere anche per i nuovi brani
     df_new = enrich_metadata(df_new, sp)
-    # -----------------------
+    # -------------------------
 
     # 5. Normalizzazione
     audio_cols = ['energy', 'valence', 'danceability', 'tempo', 'loudness', 
@@ -340,10 +331,9 @@ def fetch_history():
     for col in audio_cols:
         if col not in df_new.columns: df_new[col] = np.nan
     
-    # Fill NaN con media o default
     df_new[audio_cols] = df_new[audio_cols].fillna(df_new[audio_cols].mean(numeric_only=True)).fillna(0.5)
 
-    print("Normalizzazione dati...")
+    print("Normalizzazione nuovi dati...")
     
     min_data = {
         'energy': 0.0, 'valence': 0.0, 'danceability': 0.0,
@@ -363,18 +353,28 @@ def fetch_history():
     joblib.dump(scaler, SCALER_FILE)
     df_new[audio_cols] = scaler.transform(df_new[audio_cols])
 
-    # 6. Salvataggio (Snapshot del Profilo)
-    # Ordiniamo per peso decrescente (i brani più importanti per il recommender in alto)
-    df_new = df_new.sort_values(by='weight', ascending=False)
+    # 6. Merge
+    if not df_existing.empty:
+        df_updated = pd.concat([df_existing, df_new], ignore_index=True)
+    else:
+        df_updated = df_new
 
-    final_cols = ['id', 'name', 'artist', 'genres', 'popularity', 'weight', 'sources', 'played_at'] + audio_cols
-    cols_to_save = [c for c in final_cols if c in df_new.columns]
+    # Sort & Cut
+    df_updated['played_at'] = pd.to_datetime(df_updated['played_at'])
+    df_updated = df_updated.sort_values(by='played_at', ascending=True)
+
+    if len(df_updated) > 1000:
+        print(f"Taglio cronologia: da {len(df_updated)} mantenuti ultimi 1000.")
+        df_updated = df_updated.tail(1000)
+
+    # 7. Save
+    final_cols = ['id', 'name', 'artist', 'genres', 'popularity', 'played_at', 'source'] + audio_cols
+    cols_to_save = [c for c in final_cols if c in df_updated.columns]
     
-    # Salviamo sovrascrivendo (o rigenerando) il file, dato che è un profilo pesato completo
-    df_new[cols_to_save].to_csv(HISTORY_FILE, index=False)
+    df_updated[cols_to_save].to_csv(HISTORY_FILE, index=False)
     
     print("-" * 40)
-    print(f"Operazione completata. Profilo utente generato con {len(df_new)} brani.")
+    print(f"Operazione completata. Totale brani in cronologia: {len(df_updated)}")
     print("-" * 40)
 
 if __name__ == "__main__":
