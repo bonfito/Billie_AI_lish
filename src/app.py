@@ -10,8 +10,8 @@ from dotenv import load_dotenv
 # Import dai moduli locali
 from recommender import SongRecommender
 from oracle import MusicOracle 
+from utils import calculate_avalanche_context
 from spotify_client import add_track_to_playlist, get_track_details
-from fetch_userhistory import fetch_history
 
 # --- CONFIGURAZIONE PERCORSI ---
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -23,7 +23,7 @@ SCALER_PATH = os.path.join(DATA_DIR, 'scaler.save')
 # Carica variabili ambiente
 load_dotenv()
 
-# --- CARICAMENTO SCALER (Per denormalizzare Tempo e Loudness) ---
+# --- CARICAMENTO SCALER ---
 try:
     scaler = joblib.load(SCALER_PATH)
 except Exception as e:
@@ -91,7 +91,6 @@ st.markdown("""
         text-align: left;
         background-color: #111;
         padding: 15px;
-        margin-left:-200px;
         border-radius: 15px;
         border: 1px solid #333;
         height: 352px; /* Stessa altezza del player */
@@ -163,29 +162,22 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- FUNZIONE GENERAZIONE ---
-def generate_new_recommendation(manual_target=None):
+# --- FUNZIONE GENERAZIONE (CORRETTA) ---
+def generate_new_recommendation():
+    # Rimosso argomento manual_target
     if st.session_state.history_df is not None:
         try:
-            # FIX: Passiamo manual_target al recommender
+            # Rimosso target_features=... dalla chiamata
             recs_df, pred_vector = st.session_state.recommender.recommend(
                 st.session_state.history_df, 
-                k=20,
-                target_features=manual_target
+                k=20
             )
             
-            if recs_df.empty:
-                st.error("Nessun brano trovato.")
-                return False
-
             best_song = recs_df.iloc[0]
             st.session_state.current_track = best_song.to_dict()
             st.session_state.predicted_vector = pred_vector.flatten()
             st.session_state.suggestion_made = True
-            
-            if 'past_track_ids' not in st.session_state: st.session_state.past_track_ids = []
             st.session_state.past_track_ids.append(str(best_song['id']))
-            
             return True
         except Exception as e:
             st.error(f"Errore generazione: {e}")
@@ -193,18 +185,38 @@ def generate_new_recommendation(manual_target=None):
     return False
 
 # --- 1. INIZIALIZZAZIONE ---
-if 'oracle' not in st.session_state:
-    with st.spinner("Sintonizzando Billie AI-lish..."):
-        st.session_state.oracle = MusicOracle() 
-        try:
-            st.session_state.recommender = SongRecommender()
-        except Exception as e:
-            st.error(f"System Error: {e}")
-            st.stop()
+@st.cache_resource(show_spinner="Caricamento Motore AI...")
+def load_engines():
+    """Carica i modelli pesanti una sola volta e li tiene in RAM."""
+    oracle = MusicOracle()
+    try:
+        recommender = SongRecommender()
+    except Exception as e:
+        return None, None, e
+    return oracle, recommender, None
+
+# Inizializzazione Sessione
+if 'recommender' not in st.session_state:
+    oracle, rec, err = load_engines()
+    
+    if err:
+        st.error(f"Errore critico avvio: {err}")
+        st.stop()
+    
+    st.session_state.oracle = oracle
+    st.session_state.recommender = rec
+    
+    # Variabili di stato leggere
     st.session_state.past_track_ids = []
     st.session_state.suggestion_made = False
     st.session_state.current_track = None
     st.session_state.predicted_vector = None
+    
+@st.cache_data(ttl=5) 
+def load_history_data(path):
+    if os.path.exists(path):
+        return pd.read_csv(path)
+    return None
 
 # --- 2. CARICAMENTO STORIA ---
 if 'history_df' not in st.session_state:
@@ -215,11 +227,9 @@ if 'history_df' not in st.session_state:
             features = st.session_state.recommender.audio_cols
             valid = [c for c in features if c in history_df.columns]
             if valid:
-                # Inizializza il contesto con la media semplice (0-1)
                 st.session_state.current_context = history_df[valid].mean().values
                 st.session_state.song_count = len(history_df)
                 
-                # Top Genre/Artist
                 genre_col = 'genres' if 'genres' in history_df.columns else 'genre'
                 if genre_col in history_df.columns:
                     v_gen = history_df[~history_df[genre_col].isin(['unknown', 'nan'])][genre_col]
@@ -238,7 +248,7 @@ if 'history_df' not in st.session_state:
 st.markdown("<div class='main-title'>BILLIE AI-LISH</div>", unsafe_allow_html=True)
 st.markdown("<div class='subtitle'>Artificial Music Agent</div>", unsafe_allow_html=True)
 
-# --- SIDEBAR (CON SLIDER 0-100) ---
+# --- SIDEBAR (LOGICA: SLIDER 0-100 & SCALER) ---
 st.sidebar.header("CONTROL ROOM")
 st.sidebar.caption(f"Genre: {st.session_state.get('top_genre', '-')} | Artist: {st.session_state.get('top_artist', '-')}")
 st.sidebar.markdown("---")
@@ -279,7 +289,7 @@ if st.session_state.get('current_context') is not None:
         submitted = st.form_submit_button("APPLICA & RIGENERA")
         
         if submitted:
-            # FIX: Normalizzazione Input Slider -> FAISS
+            # 1. Normalizzazione Input Slider -> 0-1
             raw_target = [
                 n_en / 100.0, n_val / 100.0, n_dan / 100.0,
                 n_tem, n_lou, n_spe,
@@ -287,32 +297,23 @@ if st.session_state.get('current_context') is not None:
             ]
             
             final_target_norm = raw_target
+            # 2. Se abbiamo lo scaler, trasformiamo i valori reali (es. 120BPM) in valori AI (0.5)
             if scaler:
                 try:
                     final_target_norm = scaler.transform([raw_target])[0]
                 except:
                     pass
 
+            # 3. Aggiorniamo il contesto grafico
             st.session_state.current_context = final_target_norm
             
-            # Dizionario per recommender
-            cols = st.session_state.recommender.audio_cols
-            manual_dict_norm = dict(zip(cols, final_target_norm))
-            
             with st.spinner("Modulazione frequenze AI in corso..."):
-                if generate_new_recommendation(manual_target=manual_dict_norm):
+                # 4. Chiamiamo senza argomenti
+                if generate_new_recommendation():
                     time.sleep(0.2)
                     st.rerun()
 else:
     st.sidebar.warning("Inizializza la history per attivare l'equalizzatore.")
-    if st.sidebar.button("🔄 Aggiorna Cronologia"):
-        with st.spinner("Scaricamento dati..."):
-            try:
-                fetch_history()
-                if 'history_df' in st.session_state: del st.session_state['history_df']
-                st.rerun()
-            except Exception as e:
-                st.sidebar.error(f"Errore: {e}")
 
 # --- GENERAZIONE ---
 c1, col_gen, c3 = st.columns([1, 2, 1])
@@ -330,6 +331,7 @@ if st.session_state.suggestion_made and st.session_state.current_track:
     
     col_player, col_stats = st.columns([2, 1]) 
     
+    # 1. Colonna Sinistra: Player Spotify
     with col_player:
         if pd.notna(tid):
             url = f"https://open.spotify.com/embed/track/{tid}?utm_source=generator&theme=0"
@@ -337,11 +339,11 @@ if st.session_state.suggestion_made and st.session_state.current_track:
         else:
             st.warning("Anteprima non disponibile per questa traccia.")
 
-    # 2. Colonna Destra: Feature List (Track DNA - Tunebat Style)
+    # 2. Colonna Destra: Feature List
     with col_stats:
         audio_cols = ['energy', 'valence', 'danceability', 'tempo', 'loudness', 'speechiness', 'acousticness', 'instrumentalness', 'liveness']
         
-        # --- PREPARAZIONE DATI REALI (DENORMALIZZAZIONE SICURA) ---
+        # --- PREPARAZIONE DATI REALI ---
         norm_vector = np.array([track.get(c, 0) for c in audio_cols]).reshape(1, -1)
         real_data_map = {}
         if scaler:
@@ -364,6 +366,7 @@ if st.session_state.suggestion_made and st.session_state.current_track:
                 val_str = f"{db:.1f} dB"
             else:
                 val_str = f"{int(val_norm * 100)}"
+            
             html_stats += f"<div class='feature-item'><span class='feat-label'>{f.capitalize()}</span><span class='feat-val'>{val_str}</span></div>"
             
         html_stats += "</div>"
@@ -380,37 +383,32 @@ if st.session_state.suggestion_made and st.session_state.current_track:
     b1, b_save, b_skip, b4 = st.columns([1, 2, 2, 1])
     with b_save:
         if st.button("SALVA", key="btn_save"):
-            with st.status("Salvataggio...", expanded=False) as status:
+            with st.status("Apprendimento e Generazione...", expanded=False) as status:
                 real_g, real_p = get_track_details(track['id'])
                 cols = st.session_state.recommender.audio_cols
                 feats = np.array([track[k] for k in cols])
                 
-                # Addestramento incrementale (opzionale se stiamo usando logica pura)
-                if st.session_state.oracle:
-                    st.session_state.oracle.train_incremental(st.session_state.current_context, feats)
-                
-                # Aggiornamento manuale del contesto (Media mobile semplice per UI)
+                # 1. Allenamento
+                st.session_state.oracle.train_incremental(st.session_state.current_context, feats)
                 st.session_state.song_count += 1
-                # Mix 90% vecchio / 10% nuovo per fluidità UI, il recommender userà la history reale
-                st.session_state.current_context = (st.session_state.current_context * 0.9) + (feats * 0.1)
+                st.session_state.current_context = calculate_avalanche_context(st.session_state.current_context, feats, st.session_state.song_count)
                 
+                # 2. Spotify
                 if tid: add_track_to_playlist(tid)
                 
+                # 3. Blacklist
                 with open(BLACKLIST_PATH, "a") as f: 
                     f.write(f"{track['id']}\n")
                 
+                # 4. History CSV
                 new_row = {'id': track['id'], 'name': track['name'], 'artist': track['artist'], 'genres': real_g, 'popularity': real_p, 'year': track.get('year'), **{k: track[k] for k in cols}}
-                # Importante: Aggiungi timestamp per ordinamento
-                new_row['played_at'] = pd.Timestamp.now().isoformat()
-                
                 df_new = pd.DataFrame([new_row])
                 df_new.to_csv(HISTORY_PATH, mode='a', header=not os.path.exists(HISTORY_PATH), index=False)
+                st.session_state.history_df = pd.concat([st.session_state.history_df, df_new], ignore_index=True)
                 
-                # Aggiorna Session State
-                st.session_state.history_df = pd.concat([pd.DataFrame([new_row]), st.session_state.history_df], ignore_index=True)
-                
+                # 5. Generazione
                 generate_new_recommendation()
-                status.update(label="Salvato!", state="complete")
+                status.update(label="Salvato e Blacklistato!", state="complete")
             st.rerun()
 
     with b_skip:
@@ -425,18 +423,15 @@ if st.session_state.suggestion_made and st.session_state.current_track:
 
 st.markdown("---")
 
-# --- HISTORY (LATEST DISCOVERIES) ---
+# --- HISTORY & RADAR ---
 st.markdown("<div style='letter-spacing: 5px; font-weight: 900; color: #444; margin-top:20px; font-size: 0.7rem;'>LATEST DISCOVERIES</div>", unsafe_allow_html=True)
 if st.session_state.history_df is not None:
-    # Mostriamo semplicemente i primi 50 (fetch_userhistory li salva con il più recente in cima)
-    recent = st.session_state.history_df.head(50).reset_index(drop=True)
-    
+    recent = st.session_state.history_df[['name', 'artist']].tail(50).iloc[::-1].reset_index(drop=True)
+    total = len(recent)
     html_h = "<div class='history-container'><table class='history-table'>"
     for i, r in recent.iterrows():
-        num = str(i + 1).zfill(2)
-        name = r['name'] if pd.notna(r['name']) else "Unknown"
-        artist = r['artist'] if pd.notna(r['artist']) else "Unknown"
-        html_h += f"<tr><td class='track-number'>{num}</td><td class='track-title-cell'>{name} <span class='history-row-artist'> // {artist}</span></td></tr>"
+        num = str(total - i).zfill(2)
+        html_h += f"<tr><td class='track-number'>{num}</td><td class='track-title-cell'>{r['name']} <span class='history-row-artist'> // {r['artist']}</span></td></tr>"
     html_h += "</table></div>"
     st.markdown(html_h, unsafe_allow_html=True)
 
