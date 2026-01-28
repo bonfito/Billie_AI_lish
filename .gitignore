@@ -31,6 +31,3 @@ data/user_history.csv
 data/user_history.csv
 data/tracks.db
 data/tracks.index
-data/history_long.csv
-data/history_medium.csv
-data/history_short.csv
