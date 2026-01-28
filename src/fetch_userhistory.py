@@ -13,14 +13,13 @@ load_dotenv()
 
 # --- CONFIGURAZIONE PERCORSI ---
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-# Risaliamo di un livello per trovare la cartella data corretta
 DATA_DIR = os.path.normpath(os.path.join(CURRENT_DIR, '..', 'data'))
 
-# File di Output
-HISTORY_FILE = os.path.join(DATA_DIR, "user_history.csv") # Solo Recent (Ultimi 50)
-SHORT_FILE = os.path.join(DATA_DIR, "history_short.csv")
-MEDIUM_FILE = os.path.join(DATA_DIR, "history_medium.csv")
-LONG_FILE = os.path.join(DATA_DIR, "history_long.csv")
+# File di Output (Logica Separata)
+HISTORY_FILE = os.path.join(DATA_DIR, "user_history.csv") # Solo Recent (Ultimi 50) - QUESTO USA L'APP
+SHORT_FILE = os.path.join(DATA_DIR, "history_short.csv")  # Backup
+MEDIUM_FILE = os.path.join(DATA_DIR, "history_medium.csv") # Backup
+LONG_FILE = os.path.join(DATA_DIR, "history_long.csv")     # Backup
 
 # File di Supporto
 CACHE_FILE = os.path.join(DATA_DIR, "audio_features_cache.csv")
@@ -48,9 +47,6 @@ def save_to_cache(new_data_list):
     print(f"Cache aggiornata: +{len(new_data_list)} brani.")
 
 def get_reccobeats_track_info(spotify_ids):
-    """
-    Recupera gli ID interni di Reccobeats partendo dagli ID Spotify.
-    """
     if not spotify_ids: return {}
     ids_str = ','.join(spotify_ids)
     url = f"https://api.reccobeats.com/v1/track?ids={ids_str}"
@@ -60,31 +56,9 @@ def get_reccobeats_track_info(spotify_ids):
         data = response.json()
         mapping = {}
         for track in data.get('content', []):
-            # Rimossa logica href come richiesto.
-            # Assumiamo che l'API restituisca l'ID corretto o mappabile.
-            # Se l'API restituisce 'id' come ID Reccobeats e lo usiamo per la chiave.
             r_id = track.get('id')
-            # Nota: In molti wrapper, l'ID richiesto corrisponde all'ID restituito o c'è un campo id esterno.
-            # Qui mappiamo semplicemente se troviamo un ID valido.
-            if r_id: 
-                # Fallback: usiamo l'ID della richiesta se possibile, oppure iteriamo
-                # Per semplicità in questa versione "pulita", mappiamo l'ID su se stesso 
-                # o sull'ID interno se disponibile nel contesto.
-                # Dato che abbiamo rimosso href che faceva da ponte, assumiamo 
-                # che possiamo ritrovare l'ID tramite l'ordine o che 'id' sia quello Spotify.
-                pass 
-                
-            # NOTA: Senza href o external_ids, il mapping preciso ID Spotify -> ID Recco 
-            # dipende dalla struttura esatta della risposta API. 
-            # Mantengo la logica originale di mapping basata sulla struttura dati nota,
-            # ma senza usare la stringa href esplicitamente se possibile.
-            # Per non rompere il flusso dati:
-            # Ripristino un mapping sicuro basato sull'ID se presente.
-            if r_id:
-                # Usiamo l'ID restituito come chiave se corrisponde a uno di quelli cercati
-                if r_id in spotify_ids:
-                    mapping[r_id] = r_id
-                
+            if r_id and r_id in spotify_ids:
+                mapping[r_id] = r_id
         return mapping
     except: return {}
 
@@ -101,56 +75,26 @@ def enrich_metadata(df, sp):
     
     unique_ids = [uid for uid in df['id'].unique() if len(str(uid)) == 22]
     t_pop_map = {}
-    a_genre_map = {}
     
-    # 1. Tracks (Popolarità)
     for i in range(0, len(unique_ids), 50):
         try:
             tracks = sp.tracks(unique_ids[i:i+50])['tracks']
             for t in tracks:
-                if t:
-                    t_pop_map[t['id']] = t['popularity']
-                    if t['artists']:
-                        a_id = t['artists'][0]['id']
-                        if a_id not in a_genre_map: a_genre_map[a_id] = 'unknown'
-        except: time.sleep(1)
-
-    # 2. Artists (Generi)
-    a_ids = list(a_genre_map.keys())
-    for i in range(0, len(a_ids), 50):
-        try:
-            artists = sp.artists(a_ids[i:i+50])['artists']
-            for a in artists:
-                if a:
-                    genres = a.get('genres', [])
-                    a_genre_map[a['id']] = genres[0] if genres else 'unknown'
+                if t: t_pop_map[t['id']] = t['popularity']
         except: time.sleep(1)
         
     df['popularity'] = df['id'].map(t_pop_map).fillna(0).astype(int)
-    
-    def get_genre_safe(row):
-        return 'unknown' # Semplificazione se non vogliamo fare query complesse qui
-        
-    # Per semplicità e velocità, se non abbiamo mappato tutto, lasciamo unknown
-    # La logica completa richiederebbe di rimappare track->artist->genre
-    
     return df
 
 def process_and_save_list(sp, track_list, filename, source_name):
-    """
-    Processa una lista di tracce (da Spotify API), scarica feature audio,
-    normalizza e salva su CSV specifico.
-    """
     if not track_list:
         print(f"[{source_name}] Nessun dato.")
         return
 
     print(f"[{source_name}] Elaborazione {len(track_list)} brani...")
 
-    # 1. Estrazione Base
     raw_data = []
     for item in track_list:
-        # Recently Played ha 'track' annidato, Top Tracks no
         track = item['track'] if 'track' in item else item
         if not track: continue
         
@@ -158,14 +102,13 @@ def process_and_save_list(sp, track_list, filename, source_name):
             'id': track['id'],
             'name': track['name'],
             'artist': track['artists'][0]['name'],
-            'played_at': item.get('played_at'), # Solo per Recent
+            'played_at': item.get('played_at'), 
             'source': source_name
         }
         raw_data.append(entry)
 
     df = pd.DataFrame(raw_data)
     
-    # 2. Audio Features (Cache o Reccobeats)
     cache = load_audio_cache()
     to_fetch = []
     final_rows = []
@@ -186,12 +129,6 @@ def process_and_save_list(sp, track_list, filename, source_name):
     if to_fetch:
         print(f"[{source_name}] Scaricamento features mancanti per {len(to_fetch)} brani...")
         ids = [x['id'] for x in to_fetch]
-        
-        # Semplificazione: Se Reccobeats richiede troppo lavoro di mapping senza href,
-        # e se abbiamo i dati in cache o possiamo usare fallback, facciamo così.
-        # Qui usiamo una logica robusta: iteriamo e cerchiamo.
-        
-        # Batch mapping ID
         mappings = {}
         for i in range(0, len(ids), 20):
             batch = ids[i:i+20]
@@ -201,15 +138,12 @@ def process_and_save_list(sp, track_list, filename, source_name):
         for row in to_fetch:
             tid = row['id']
             feats = None
-            
-            # Tentativo di recupero features
             if tid in mappings:
                 feats = get_audio_features(mappings[tid])
             
             if feats:
                 feats.pop('id', None)
                 row.update(feats)
-                # Cache
                 ce = {'id': tid}
                 for k in feature_keys: ce[k] = feats.get(k)
                 new_cache_entries.append(ce)
@@ -220,23 +154,17 @@ def process_and_save_list(sp, track_list, filename, source_name):
     if new_cache_entries:
         save_to_cache(new_cache_entries)
 
-    # 3. Creazione DataFrame Finale
     df_final = pd.DataFrame(final_rows)
-    
-    # Arricchimento Metadati (Popolarità)
     df_final = enrich_metadata(df_final, sp)
 
-    # 4. Normalizzazione
     for c in feature_keys:
         if c not in df_final.columns: df_final[c] = np.nan
     df_final[feature_keys] = df_final[feature_keys].fillna(0.5)
 
-    # Usiamo lo Scaler globale se esiste, altrimenti lo creiamo
     if os.path.exists(SCALER_FILE):
         scaler = joblib.load(SCALER_FILE)
     else:
         scaler = MinMaxScaler()
-        # Fit su range teorici
         min_d = {'energy':0,'valence':0,'danceability':0,'tempo':0,'loudness':-60,'speechiness':0,'acousticness':0,'instrumentalness':0,'liveness':0}
         max_d = {'energy':1,'valence':1,'danceability':1,'tempo':250,'loudness':0,'speechiness':1,'acousticness':1,'instrumentalness':1,'liveness':1}
         ref = pd.DataFrame([min_d, max_d])
@@ -245,8 +173,6 @@ def process_and_save_list(sp, track_list, filename, source_name):
     
     df_final[feature_keys] = scaler.transform(df_final[feature_keys])
     
-    # 5. Salvataggio
-    # Se è la history recente, ordina per data
     if source_name == "recent" and 'played_at' in df_final.columns:
         df_final = df_final.sort_values(by='played_at', ascending=False)
         
@@ -254,8 +180,12 @@ def process_and_save_list(sp, track_list, filename, source_name):
     print(f"[{source_name}] Salvato {len(df_final)} brani in {os.path.basename(filename)}")
 
 
-def fetch_history_separated():
-    # Setup Spotify
+# --- FUNZIONE PRINCIPALE (RINOMINATA PER FIX IMPORT) ---
+def fetch_history():
+    """
+    Scarica Recently Played (per l'app) e Top Tracks (per backup separati).
+    Mantiene la logica a 4 file ma espone il nome 'fetch_history' richiesto da app.py.
+    """
     scope = "user-read-recently-played user-top-read"
     sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
         scope=scope,
@@ -266,35 +196,32 @@ def fetch_history_separated():
     
     print("=== AVVIO SCARICAMENTO DATI UTENTE ===")
     
-    # 1. RECENT (User History Pura - Ultimi 50)
+    # 1. RECENT (User History Pura - Ultimi 50 - FILE PRINCIPALE APP)
     try:
         recent = sp.current_user_recently_played(limit=50)
         process_and_save_list(sp, recent['items'], HISTORY_FILE, "recent")
     except Exception as e:
         print(f"Errore Recent: {e}")
 
-    # 2. SHORT TERM (Top Tracks 4 settimane)
+    # 2. SHORT TERM (Top Tracks 4 settimane - Backup)
     try:
         short = sp.current_user_top_tracks(limit=50, time_range='short_term')
         process_and_save_list(sp, short['items'], SHORT_FILE, "short_term")
-    except Exception as e:
-        print(f"Errore Short: {e}")
-
-    # 3. MEDIUM TERM (Top Tracks 6 mesi)
+    except: pass
+    
+    # 3. MEDIUM TERM (Top Tracks 6 mesi - Backup)
     try:
         medium = sp.current_user_top_tracks(limit=50, time_range='medium_term')
         process_and_save_list(sp, medium['items'], MEDIUM_FILE, "medium_term")
-    except Exception as e:
-        print(f"Errore Medium: {e}")
+    except: pass
         
-    # 4. LONG TERM (Top Tracks Anni)
+    # 4. LONG TERM (Top Tracks Anni - Backup)
     try:
         long = sp.current_user_top_tracks(limit=50, time_range='long_term')
         process_and_save_list(sp, long['items'], LONG_FILE, "long_term")
-    except Exception as e:
-        print(f"Errore Long: {e}")
+    except: pass
 
     print("=== OPERAZIONE COMPLETATA ===")
 
 if __name__ == "__main__":
-    fetch_history_separated()
+    fetch_history()
