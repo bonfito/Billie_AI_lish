@@ -10,15 +10,15 @@ from dotenv import load_dotenv
 # Import dai moduli locali
 from recommender import SongRecommender
 from oracle import MusicOracle 
+from utils import calculate_avalanche_context
 from spotify_client import add_track_to_playlist, get_track_details
 from fetch_userhistory import fetch_history
 
 # --- CONFIGURAZIONE PERCORSI ---
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.normpath(os.path.join(CURRENT_DIR, '..', 'data'))
-HISTORY_PATH = os.path.join(DATA_DIR, 'user_history.csv')
-BLACKLIST_PATH = os.path.join(DATA_DIR, 'blacklist.txt')
-SCALER_PATH = os.path.join(DATA_DIR, 'scaler.save')
+HISTORY_PATH = os.path.normpath(os.path.join(CURRENT_DIR, '..', 'data', 'user_history.csv'))
+BLACKLIST_PATH = os.path.normpath(os.path.join(CURRENT_DIR, '..', 'data', 'blacklist.txt'))
+SCALER_PATH = os.path.normpath(os.path.join(CURRENT_DIR, '..', 'data', 'scaler.save'))
 
 # Carica variabili ambiente
 load_dotenv()
@@ -167,17 +167,7 @@ st.markdown("""
 def generate_new_recommendation(manual_target=None):
     if st.session_state.history_df is not None:
         try:
-            # FIX: Passiamo manual_target al recommender
-            recs_df, pred_vector = st.session_state.recommender.recommend(
-                st.session_state.history_df, 
-                k=20,
-                target_features=manual_target
-            )
-            
-            if recs_df.empty:
-                st.error("Nessun brano trovato.")
-                return False
-
+            recs_df, pred_vector = st.session_state.recommender.recommend(st.session_state.history_df, k=20)
             best_song = recs_df.iloc[0]
             st.session_state.current_track = best_song.to_dict()
             st.session_state.predicted_vector = pred_vector.flatten()
@@ -215,11 +205,9 @@ if 'history_df' not in st.session_state:
             features = st.session_state.recommender.audio_cols
             valid = [c for c in features if c in history_df.columns]
             if valid:
-                # Inizializza il contesto con la media semplice (0-1)
                 st.session_state.current_context = history_df[valid].mean().values
                 st.session_state.song_count = len(history_df)
                 
-                # Top Genre/Artist
                 genre_col = 'genres' if 'genres' in history_df.columns else 'genre'
                 if genre_col in history_df.columns:
                     v_gen = history_df[~history_df[genre_col].isin(['unknown', 'nan'])][genre_col]
@@ -249,26 +237,15 @@ if st.session_state.get('current_context') is not None:
         
         ctx = st.session_state.current_context
         
-        # Denormalizzazione per slider (se scaler esiste)
-        start_vals = ctx
-        if scaler:
-            try:
-                start_vals = scaler.inverse_transform(ctx.reshape(1, -1))[0]
-            except:
-                pass
-
         st.markdown("**VIBE**")
         n_en = st.slider("Energy", 0, 100, int(np.clip(ctx[0], 0, 1) * 100))
         n_val = st.slider("Valence (Mood)", 0, 100, int(np.clip(ctx[1], 0, 1) * 100))
         n_dan = st.slider("Danceability", 0, 100, int(np.clip(ctx[2], 0, 1) * 100))
         
         st.markdown("**SOUND**")
-        # Default presi dai valori reali (BPM, dB)
-        def_tem = float(np.clip(start_vals[3], 40, 200)) if scaler else float(np.clip(ctx[3], 40, 200))
-        def_lou = float(np.clip(start_vals[4], -60, 0)) if scaler else float(np.clip(ctx[4], -60, 0))
-        
-        n_tem = st.slider("Tempo (BPM)", 40.0, 200.0, def_tem) 
-        n_lou = st.slider("Loudness (dB)", -60.0, 0.0, def_lou)
+        # Tempo sempre in BPM per coerenza fisica
+        n_tem = st.slider("Tempo (BPM)", 40.0, 200.0, float(np.clip(ctx[3], 40, 200))) 
+        n_lou = st.slider("Loudness (dB)", -60.0, 0.0, float(np.clip(ctx[4], -60, 0)))
         
         st.markdown("**TEXTURE**")
         n_spe = st.slider("Speechiness", 0.0, 1.0, float(np.clip(ctx[5], 0, 1)))
@@ -279,28 +256,14 @@ if st.session_state.get('current_context') is not None:
         submitted = st.form_submit_button("APPLICA & RIGENERA")
         
         if submitted:
-            # FIX: Normalizzazione Input Slider -> FAISS
-            raw_target = [
+            new_ctx = np.array([
                 n_en / 100.0, n_val / 100.0, n_dan / 100.0,
                 n_tem, n_lou, n_spe,
                 n_aco / 100.0, n_ins / 100.0, n_liv / 100.0
-            ]
-            
-            final_target_norm = raw_target
-            if scaler:
-                try:
-                    final_target_norm = scaler.transform([raw_target])[0]
-                except:
-                    pass
-
-            st.session_state.current_context = final_target_norm
-            
-            # Dizionario per recommender
-            cols = st.session_state.recommender.audio_cols
-            manual_dict_norm = dict(zip(cols, final_target_norm))
-            
+            ])
+            st.session_state.current_context = new_ctx
             with st.spinner("Modulazione frequenze AI in corso..."):
-                if generate_new_recommendation(manual_target=manual_dict_norm):
+                if generate_new_recommendation():
                     time.sleep(0.2)
                     st.rerun()
 else:
@@ -309,7 +272,7 @@ else:
         with st.spinner("Scaricamento dati..."):
             try:
                 fetch_history()
-                if 'history_df' in st.session_state: del st.session_state['history_df']
+                load_data.clear()
                 st.rerun()
             except Exception as e:
                 st.sidebar.error(f"Errore: {e}")
@@ -342,28 +305,45 @@ if st.session_state.suggestion_made and st.session_state.current_track:
         audio_cols = ['energy', 'valence', 'danceability', 'tempo', 'loudness', 'speechiness', 'acousticness', 'instrumentalness', 'liveness']
         
         # --- PREPARAZIONE DATI REALI (DENORMALIZZAZIONE SICURA) ---
+        # 1. Recuperiamo i dati normalizzati (0-1) che sono attualmente in 'track'
         norm_vector = np.array([track.get(c, 0) for c in audio_cols]).reshape(1, -1)
+        
+        # 2. Proviamo a ottenere i dati fisici (BPM, dB) tramite lo scaler
         real_data_map = {}
         if scaler:
             try:
+                # Inversa per ottenere BPM e dB corretti
                 real_vector = scaler.inverse_transform(norm_vector)[0]
                 real_data_map = dict(zip(audio_cols, real_vector))
             except:
-                pass 
+                pass # Se fallisce, useremo fallback
         
         display_feats = audio_cols 
         html_stats = "<div class='feature-list'><div style='color:#fff; font-weight:900; margin-bottom:10px; text-transform:uppercase; letter-spacing:2px; font-size:0.9rem;'>Track DNA</div>"
         
         for f in display_feats:
+            # Valore normalizzato (0-1) - Lo usiamo per le percentuali
             val_norm = track.get(f, 0)
+            
+            # --- LOGICA DI VISUALIZZAZIONE TUNEBAT ---
             if f == 'tempo':
+                # Preferiamo il valore reale dallo scaler (BPM)
+                # Fallback: stimiamo 40-200 bpm se scaler manca
                 bpm = real_data_map.get(f, val_norm * 160 + 40)
                 val_str = f"{int(bpm)} BPM"
+                
             elif f == 'loudness':
+                # Preferiamo il valore reale dallo scaler (dB)
+                # Fallback: stimiamo -60 a 0 dB
                 db = real_data_map.get(f, val_norm * 60 - 60)
                 val_str = f"{db:.1f} dB"
+                
             else:
+                # Per tutte le altre feature (Energy, Dance, etc.)
+                # TUNEBAT STYLE: Moltiplichiamo per 100 e mostriamo numero intero
+                # Es: 0.72 -> 72
                 val_str = f"{int(val_norm * 100)}"
+            
             html_stats += f"<div class='feature-item'><span class='feat-label'>{f.capitalize()}</span><span class='feat-val'>{val_str}</span></div>"
             
         html_stats += "</div>"
@@ -380,19 +360,14 @@ if st.session_state.suggestion_made and st.session_state.current_track:
     b1, b_save, b_skip, b4 = st.columns([1, 2, 2, 1])
     with b_save:
         if st.button("SALVA", key="btn_save"):
-            with st.status("Salvataggio...", expanded=False) as status:
+            with st.status("Apprendimento e Generazione...", expanded=False) as status:
                 real_g, real_p = get_track_details(track['id'])
                 cols = st.session_state.recommender.audio_cols
                 feats = np.array([track[k] for k in cols])
                 
-                # Addestramento incrementale (opzionale se stiamo usando logica pura)
-                if st.session_state.oracle:
-                    st.session_state.oracle.train_incremental(st.session_state.current_context, feats)
-                
-                # Aggiornamento manuale del contesto (Media mobile semplice per UI)
+                st.session_state.oracle.train_incremental(st.session_state.current_context, feats)
                 st.session_state.song_count += 1
-                # Mix 90% vecchio / 10% nuovo per fluidità UI, il recommender userà la history reale
-                st.session_state.current_context = (st.session_state.current_context * 0.9) + (feats * 0.1)
+                st.session_state.current_context = calculate_avalanche_context(st.session_state.current_context, feats, st.session_state.song_count)
                 
                 if tid: add_track_to_playlist(tid)
                 
@@ -400,17 +375,12 @@ if st.session_state.suggestion_made and st.session_state.current_track:
                     f.write(f"{track['id']}\n")
                 
                 new_row = {'id': track['id'], 'name': track['name'], 'artist': track['artist'], 'genres': real_g, 'popularity': real_p, 'year': track.get('year'), **{k: track[k] for k in cols}}
-                # Importante: Aggiungi timestamp per ordinamento
-                new_row['played_at'] = pd.Timestamp.now().isoformat()
-                
                 df_new = pd.DataFrame([new_row])
                 df_new.to_csv(HISTORY_PATH, mode='a', header=not os.path.exists(HISTORY_PATH), index=False)
-                
-                # Aggiorna Session State
-                st.session_state.history_df = pd.concat([pd.DataFrame([new_row]), st.session_state.history_df], ignore_index=True)
+                st.session_state.history_df = pd.concat([st.session_state.history_df, df_new], ignore_index=True)
                 
                 generate_new_recommendation()
-                status.update(label="Salvato!", state="complete")
+                status.update(label="Salvato e Blacklistato!", state="complete")
             st.rerun()
 
     with b_skip:
@@ -425,18 +395,15 @@ if st.session_state.suggestion_made and st.session_state.current_track:
 
 st.markdown("---")
 
-# --- HISTORY (LATEST DISCOVERIES) ---
+# --- HISTORY & RADAR ---
 st.markdown("<div style='letter-spacing: 5px; font-weight: 900; color: #444; margin-top:20px; font-size: 0.7rem;'>LATEST DISCOVERIES</div>", unsafe_allow_html=True)
 if st.session_state.history_df is not None:
-    # Mostriamo semplicemente i primi 50 (fetch_userhistory li salva con il più recente in cima)
-    recent = st.session_state.history_df.head(50).reset_index(drop=True)
-    
+    recent = st.session_state.history_df[['name', 'artist']].tail(50).iloc[::-1].reset_index(drop=True)
+    total = len(recent)
     html_h = "<div class='history-container'><table class='history-table'>"
     for i, r in recent.iterrows():
-        num = str(i + 1).zfill(2)
-        name = r['name'] if pd.notna(r['name']) else "Unknown"
-        artist = r['artist'] if pd.notna(r['artist']) else "Unknown"
-        html_h += f"<tr><td class='track-number'>{num}</td><td class='track-title-cell'>{name} <span class='history-row-artist'> // {artist}</span></td></tr>"
+        num = str(total - i).zfill(2)
+        html_h += f"<tr><td class='track-number'>{num}</td><td class='track-title-cell'>{r['name']} <span class='history-row-artist'> // {r['artist']}</span></td></tr>"
     html_h += "</table></div>"
     st.markdown(html_h, unsafe_allow_html=True)
 
