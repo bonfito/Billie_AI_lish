@@ -163,25 +163,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- FUNZIONE GENERAZIONE ---
-def generate_new_recommendation(manual_target=None):
-    if st.session_state.history_df is not None:
-        try:
-            recs_df, pred_vector = st.session_state.recommender.recommend(st.session_state.history_df, k=20)
-            best_song = recs_df.iloc[0]
-            st.session_state.current_track = best_song.to_dict()
-            st.session_state.predicted_vector = pred_vector.flatten()
-            st.session_state.suggestion_made = True
-            
-            if 'past_track_ids' not in st.session_state: st.session_state.past_track_ids = []
-            st.session_state.past_track_ids.append(str(best_song['id']))
-            
-            return True
-        except Exception as e:
-            st.error(f"Errore generazione: {e}")
-            return False
-    return False
-
 # --- 1. INIZIALIZZAZIONE ---
 if 'oracle' not in st.session_state:
     with st.spinner("Sintonizzando Billie AI-lish..."):
@@ -195,6 +176,58 @@ if 'oracle' not in st.session_state:
     st.session_state.suggestion_made = False
     st.session_state.current_track = None
     st.session_state.predicted_vector = None
+    # --- NUOVO: INIZIALIZZAZIONE CODA ---
+    st.session_state.recs_queue = pd.DataFrame()
+
+# --- FUNZIONE GENERAZIONE (BUFFERIZZATA) ---
+def generate_new_recommendation(manual_target=None):
+    if st.session_state.history_df is not None:
+        try:
+            # 1. Se c'è un target manuale (Slider), ricalcoliamo tutto e resettiamo la coda
+            if manual_target is not None:
+                st.session_state.recs_queue = pd.DataFrame() # Reset coda
+                recs_df, pred_vector = st.session_state.recommender.recommend(
+                    st.session_state.history_df, k=30, target_features=manual_target
+                )
+            
+            # 2. Se la coda è vuota, calcoliamo un nuovo batch
+            elif st.session_state.recs_queue.empty:
+                recs_df, pred_vector = st.session_state.recommender.recommend(
+                    st.session_state.history_df, k=30
+                )
+            
+            # 3. Se la coda ha canzoni, usiamo quelle (ISTANTANEO)
+            else:
+                recs_df = st.session_state.recs_queue
+                # Manteniamo il vettore target precedente
+                pred_vector = st.session_state.predicted_vector if st.session_state.predicted_vector is not None else np.zeros(9)
+
+            # --- CONTROLLO ANTI-CRASH ---
+            if recs_df is None or recs_df.empty:
+                st.warning("⚠️ Nessuna canzone trovata. I filtri potrebbero essere troppo stretti.")
+                return False
+            
+            # Estrai la prima canzone
+            best_song = recs_df.iloc[0]
+
+            # Aggiorna la coda: togli la canzone scelta, tieni le altre 29
+            st.session_state.recs_queue = recs_df.iloc[1:].reset_index(drop=True)
+
+            # Aggiorna stato
+            st.session_state.current_track = best_song.to_dict()
+            if manual_target is not None or st.session_state.predicted_vector is None:
+                st.session_state.predicted_vector = pred_vector.flatten()
+                
+            st.session_state.suggestion_made = True
+            
+            if 'past_track_ids' not in st.session_state: st.session_state.past_track_ids = []
+            st.session_state.past_track_ids.append(str(best_song['id']))
+            
+            return True
+        except Exception as e:
+            st.error(f"Errore generazione: {e}")
+            return False
+    return False
 
 # --- 2. CARICAMENTO STORIA ---
 if 'history_df' not in st.session_state:
@@ -229,6 +262,14 @@ st.markdown("<div class='subtitle'>Artificial Music Agent</div>", unsafe_allow_h
 # --- SIDEBAR (CON SLIDER 0-100) ---
 st.sidebar.header("CONTROL ROOM")
 st.sidebar.caption(f"Genre: {st.session_state.get('top_genre', '-')} | Artist: {st.session_state.get('top_artist', '-')}")
+
+# --- INDICATORE CODA ---
+q_len = len(st.session_state.recs_queue) if 'recs_queue' in st.session_state else 0
+if q_len > 0:
+    st.sidebar.success(f"⚡ Coda Veloce Attiva: {q_len} brani pronti")
+else:
+    st.sidebar.info("⏳ Coda vuota (Il prossimo click ricalcolerà)")
+
 st.sidebar.markdown("---")
 
 if st.session_state.get('current_context') is not None:
@@ -237,6 +278,12 @@ if st.session_state.get('current_context') is not None:
         
         ctx = st.session_state.current_context
         
+        # Denormalizzazione per slider (se scaler esiste)
+        start_vals = ctx
+        if scaler:
+            try: start_vals = scaler.inverse_transform(ctx.reshape(1, -1))[0]
+            except: pass
+
         st.markdown("**VIBE**")
         n_en = st.slider("Energy", 0, 100, int(np.clip(ctx[0], 0, 1) * 100))
         n_val = st.slider("Valence (Mood)", 0, 100, int(np.clip(ctx[1], 0, 1) * 100))
@@ -244,8 +291,11 @@ if st.session_state.get('current_context') is not None:
         
         st.markdown("**SOUND**")
         # Tempo sempre in BPM per coerenza fisica
-        n_tem = st.slider("Tempo (BPM)", 40.0, 200.0, float(np.clip(ctx[3], 40, 200))) 
-        n_lou = st.slider("Loudness (dB)", -60.0, 0.0, float(np.clip(ctx[4], -60, 0)))
+        def_tem = float(np.clip(start_vals[3], 40, 200)) if scaler else float(np.clip(ctx[3], 40, 200))
+        def_lou = float(np.clip(start_vals[4], -60, 0)) if scaler else float(np.clip(ctx[4], -60, 0))
+        
+        n_tem = st.slider("Tempo (BPM)", 40.0, 200.0, def_tem) 
+        n_lou = st.slider("Loudness (dB)", -60.0, 0.0, def_lou)
         
         st.markdown("**TEXTURE**")
         n_spe = st.slider("Speechiness", 0.0, 1.0, float(np.clip(ctx[5], 0, 1)))
@@ -256,14 +306,30 @@ if st.session_state.get('current_context') is not None:
         submitted = st.form_submit_button("APPLICA & RIGENERA")
         
         if submitted:
-            new_ctx = np.array([
+            # 1. Normalizzazione Input Slider -> 0-1
+            raw_target = [
                 n_en / 100.0, n_val / 100.0, n_dan / 100.0,
                 n_tem, n_lou, n_spe,
                 n_aco / 100.0, n_ins / 100.0, n_liv / 100.0
-            ])
-            st.session_state.current_context = new_ctx
-            with st.spinner("Modulazione frequenze AI in corso..."):
-                if generate_new_recommendation():
+            ]
+            
+            final_target_norm = raw_target
+            # 2. Se abbiamo lo scaler, trasformiamo i valori reali (es. 120BPM) in valori AI (0.5)
+            if scaler:
+                try:
+                    final_target_norm = scaler.transform([raw_target])[0]
+                except:
+                    pass
+
+            st.session_state.current_context = final_target_norm
+            
+            # Creiamo dict per il recommender
+            cols = st.session_state.recommender.audio_cols
+            manual_dict = dict(zip(cols, final_target_norm))
+            
+            with st.spinner("Modulazione frequenze AI in corso (Ricalcolo Batch)..."):
+                # Passiamo il target manuale -> questo resetterà la coda!
+                if generate_new_recommendation(manual_target=manual_dict):
                     time.sleep(0.2)
                     st.rerun()
 else:
@@ -272,6 +338,7 @@ else:
         with st.spinner("Scaricamento dati..."):
             try:
                 fetch_history()
+                if 'history_df' in st.session_state: del st.session_state['history_df']
                 load_data.clear()
                 st.rerun()
             except Exception as e:
@@ -280,11 +347,18 @@ else:
 # --- GENERAZIONE ---
 c1, col_gen, c3 = st.columns([1, 2, 1])
 with col_gen:
-    if st.button("GENERA NUOVA VISIONE", type="primary", key="main_gen"):
-        with st.spinner("L'AI sta scansionando il database..."):
-            if generate_new_recommendation():
-                time.sleep(0.3)
-                st.rerun()
+    # Label Dinamica
+    btn_label = "GENERA PROSSIMA (⚡ Instant)" if q_len > 0 else "GENERA NUOVO BATCH (🐢 Lento)"
+    
+    if st.button(btn_label, type="primary", key="main_gen"):
+        # Mostra spinner solo se la coda è vuota
+        if q_len == 0:
+            with st.spinner("L'AI sta scansionando il database..."):
+                if generate_new_recommendation():
+                    st.rerun()
+        else:
+            generate_new_recommendation()
+            st.rerun()
 
 # --- DISPLAY CANZONE ---
 if st.session_state.suggestion_made and st.session_state.current_track:
@@ -305,47 +379,28 @@ if st.session_state.suggestion_made and st.session_state.current_track:
         audio_cols = ['energy', 'valence', 'danceability', 'tempo', 'loudness', 'speechiness', 'acousticness', 'instrumentalness', 'liveness']
         
         # --- PREPARAZIONE DATI REALI (DENORMALIZZAZIONE SICURA) ---
-        # 1. Recuperiamo i dati normalizzati (0-1) che sono attualmente in 'track'
         norm_vector = np.array([track.get(c, 0) for c in audio_cols]).reshape(1, -1)
-        
-        # 2. Proviamo a ottenere i dati fisici (BPM, dB) tramite lo scaler
         real_data_map = {}
         if scaler:
             try:
-                # Inversa per ottenere BPM e dB corretti
                 real_vector = scaler.inverse_transform(norm_vector)[0]
                 real_data_map = dict(zip(audio_cols, real_vector))
-            except:
-                pass # Se fallisce, useremo fallback
+            except: pass 
         
         display_feats = audio_cols 
         html_stats = "<div class='feature-list'><div style='color:#fff; font-weight:900; margin-bottom:10px; text-transform:uppercase; letter-spacing:2px; font-size:0.9rem;'>Track DNA</div>"
         
         for f in display_feats:
-            # Valore normalizzato (0-1) - Lo usiamo per le percentuali
             val_norm = track.get(f, 0)
-            
-            # --- LOGICA DI VISUALIZZAZIONE TUNEBAT ---
             if f == 'tempo':
-                # Preferiamo il valore reale dallo scaler (BPM)
-                # Fallback: stimiamo 40-200 bpm se scaler manca
                 bpm = real_data_map.get(f, val_norm * 160 + 40)
                 val_str = f"{int(bpm)} BPM"
-                
             elif f == 'loudness':
-                # Preferiamo il valore reale dallo scaler (dB)
-                # Fallback: stimiamo -60 a 0 dB
                 db = real_data_map.get(f, val_norm * 60 - 60)
                 val_str = f"{db:.1f} dB"
-                
             else:
-                # Per tutte le altre feature (Energy, Dance, etc.)
-                # TUNEBAT STYLE: Moltiplichiamo per 100 e mostriamo numero intero
-                # Es: 0.72 -> 72
                 val_str = f"{int(val_norm * 100)}"
-            
             html_stats += f"<div class='feature-item'><span class='feat-label'>{f.capitalize()}</span><span class='feat-val'>{val_str}</span></div>"
-            
         html_stats += "</div>"
         st.markdown(html_stats, unsafe_allow_html=True)
 
@@ -360,12 +415,14 @@ if st.session_state.suggestion_made and st.session_state.current_track:
     b1, b_save, b_skip, b4 = st.columns([1, 2, 2, 1])
     with b_save:
         if st.button("SALVA", key="btn_save"):
-            with st.status("Apprendimento e Generazione...", expanded=False) as status:
+            with st.status("Salvataggio...", expanded=False) as status:
                 real_g, real_p = get_track_details(track['id'])
                 cols = st.session_state.recommender.audio_cols
                 feats = np.array([track[k] for k in cols])
                 
-                st.session_state.oracle.train_incremental(st.session_state.current_context, feats)
+                if st.session_state.oracle:
+                    st.session_state.oracle.train_incremental(st.session_state.current_context, feats)
+                
                 st.session_state.song_count += 1
                 st.session_state.current_context = calculate_avalanche_context(st.session_state.current_context, feats, st.session_state.song_count)
                 
@@ -379,19 +436,19 @@ if st.session_state.suggestion_made and st.session_state.current_track:
                 df_new.to_csv(HISTORY_PATH, mode='a', header=not os.path.exists(HISTORY_PATH), index=False)
                 st.session_state.history_df = pd.concat([st.session_state.history_df, df_new], ignore_index=True)
                 
+                # Generazione successiva (usa la coda istantanea!)
                 generate_new_recommendation()
-                status.update(label="Salvato e Blacklistato!", state="complete")
+                status.update(label="Salvato!", state="complete")
             st.rerun()
 
     with b_skip:
         if st.button("SKIP", key="btn_skip"):
-            with st.spinner("Scartando..."):
-                with open(BLACKLIST_PATH, "a") as f: 
-                    f.write(f"{track['id']}\n")
-                st.session_state.past_track_ids.append(str(track['id']))
-                generate_new_recommendation()
-                time.sleep(0.2)
-                st.rerun()
+            # SKIP è veloce ora!
+            with open(BLACKLIST_PATH, "a") as f: 
+                f.write(f"{track['id']}\n")
+            st.session_state.past_track_ids.append(str(track['id']))
+            generate_new_recommendation() # Prende dalla coda
+            st.rerun()
 
 st.markdown("---")
 
