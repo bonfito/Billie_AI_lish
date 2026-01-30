@@ -16,14 +16,15 @@ from fetch_userhistory import fetch_history
 
 # --- CONFIGURAZIONE PERCORSI ---
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-HISTORY_PATH = os.path.normpath(os.path.join(CURRENT_DIR, '..', 'data', 'user_history.csv'))
-BLACKLIST_PATH = os.path.normpath(os.path.join(CURRENT_DIR, '..', 'data', 'blacklist.txt'))
-SCALER_PATH = os.path.normpath(os.path.join(CURRENT_DIR, '..', 'data', 'scaler.save'))
+DATA_DIR = os.path.normpath(os.path.join(CURRENT_DIR, '..', 'data'))
+HISTORY_PATH = os.path.join(DATA_DIR, 'user_history.csv')
+BLACKLIST_PATH = os.path.join(DATA_DIR, 'blacklist.txt')
+SCALER_PATH = os.path.join(DATA_DIR, 'scaler.save')
 
 # Carica variabili ambiente
 load_dotenv()
 
-# --- CARICAMENTO SCALER (Per denormalizzare Tempo e Loudness) ---
+# --- CARICAMENTO SCALER ---
 try:
     scaler = joblib.load(SCALER_PATH)
 except Exception as e:
@@ -37,7 +38,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CSS STABILE ---
+# --- CSS ---
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
@@ -69,6 +70,7 @@ st.markdown("""
     /* 2. Tipografia */
     .main-title { font-size: 3.5rem; font-weight: 900; color: #FFFFFF; text-transform: uppercase; margin-bottom: 0; }
     .subtitle { font-size: 1rem; letter-spacing: 5px; color: #1DB954; text-transform: uppercase; margin-bottom: 3rem; }
+    
     .track-name { font-size: 3rem; font-weight: 800; margin-top: 1.5rem; line-height: 1.1; color: #fff; }
     .artist-name { font-size: 1.6rem; font-weight: 400; color: #1DB954; margin-bottom: 0.5rem; }
     .meta-tag { font-size: 0.9rem; color: #555; letter-spacing: 2px; margin-bottom: 2rem; text-transform: uppercase; }
@@ -94,7 +96,7 @@ st.markdown("""
         margin-left:-200px;
         border-radius: 15px;
         border: 1px solid #333;
-        height: 352px; /* Stessa altezza del player */
+        height: 352px;
         display: flex;
         flex-direction: column;
         justify-content: center;
@@ -115,7 +117,7 @@ st.markdown("""
     .history-container {
         width: 100% !important;
         max-width: 850px; 
-        height: 450px !important; 
+        height: 250px !important; 
         overflow-y: auto; 
         margin: 20px auto; 
         padding: 0 15px;
@@ -176,10 +178,16 @@ if 'oracle' not in st.session_state:
     st.session_state.suggestion_made = False
     st.session_state.current_track = None
     st.session_state.predicted_vector = None
-    # --- NUOVO: INIZIALIZZAZIONE CODA ---
+    
+    # --- STATO CODA E VIBE ---
     st.session_state.recs_queue = pd.DataFrame()
+    st.session_state.vibe_history = [50] # Parte da 50 (Neutro)
+    
+    # --- NUOVO: BLACKLIST TEMPORANEA (SESSIONE BROWSER) ---
+    # Qui finiscono le canzoni che metti Like/Dislike per non rivederle subito
+    st.session_state.session_blacklist = []
 
-# --- FUNZIONE GENERAZIONE (BUFFERIZZATA) ---
+# --- FUNZIONE GENERAZIONE (BUFFERIZZATA + FILTRO BLACKLIST) ---
 def generate_new_recommendation(manual_target=None):
     if st.session_state.history_df is not None:
         try:
@@ -187,13 +195,20 @@ def generate_new_recommendation(manual_target=None):
             if manual_target is not None:
                 st.session_state.recs_queue = pd.DataFrame() # Reset coda
                 recs_df, pred_vector = st.session_state.recommender.recommend(
-                    st.session_state.history_df, k=30, target_features=manual_target
+                    st.session_state.history_df, 
+                    k=30, 
+                    target_features=manual_target,
+                    # Passiamo la blacklist della sessione al Recommender
+                    session_blacklist=st.session_state.session_blacklist 
                 )
             
             # 2. Se la coda è vuota, calcoliamo un nuovo batch
             elif st.session_state.recs_queue.empty:
                 recs_df, pred_vector = st.session_state.recommender.recommend(
-                    st.session_state.history_df, k=30
+                    st.session_state.history_df, 
+                    k=30,
+                    # Passiamo la blacklist della sessione al Recommender
+                    session_blacklist=st.session_state.session_blacklist
                 )
             
             # 3. Se la coda ha canzoni, usiamo quelle (ISTANTANEO)
@@ -229,6 +244,16 @@ def generate_new_recommendation(manual_target=None):
             return False
     return False
 
+# --- FUNZIONE AGGIORNAMENTO VIBE ---
+def update_vibe(points):
+    """Aggiorna il grafico della vibe (0-100)"""
+    current_score = st.session_state.vibe_history[-1]
+    new_score = np.clip(current_score + points, 0, 100)
+    st.session_state.vibe_history.append(new_score)
+    # Teniamo solo gli ultimi 50 punti per il grafico
+    if len(st.session_state.vibe_history) > 50:
+        st.session_state.vibe_history.pop(0)
+
 # --- 2. CARICAMENTO STORIA ---
 if 'history_df' not in st.session_state:
     try:
@@ -259,7 +284,7 @@ if 'history_df' not in st.session_state:
 st.markdown("<div class='main-title'>BILLIE AI-LISH</div>", unsafe_allow_html=True)
 st.markdown("<div class='subtitle'>Artificial Music Agent</div>", unsafe_allow_html=True)
 
-# --- SIDEBAR (CON SLIDER 0-100) ---
+# --- SIDEBAR ---
 st.sidebar.header("CONTROL ROOM")
 st.sidebar.caption(f"Genre: {st.session_state.get('top_genre', '-')} | Artist: {st.session_state.get('top_artist', '-')}")
 
@@ -268,7 +293,7 @@ q_len = len(st.session_state.recs_queue) if 'recs_queue' in st.session_state els
 if q_len > 0:
     st.sidebar.success(f"⚡ Coda Veloce Attiva: {q_len} brani pronti")
 else:
-    st.sidebar.info("⏳ Coda vuota (Il prossimo click ricalcolerà)")
+    st.sidebar.info("⏳ Coda vuota (Il prossimo click calcolerà un nuovo batch)")
 
 st.sidebar.markdown("---")
 
@@ -277,8 +302,6 @@ if st.session_state.get('current_context') is not None:
         st.markdown("### 🧬 DNA Equalizer")
         
         ctx = st.session_state.current_context
-        
-        # Denormalizzazione per slider (se scaler esiste)
         start_vals = ctx
         if scaler:
             try: start_vals = scaler.inverse_transform(ctx.reshape(1, -1))[0]
@@ -290,10 +313,8 @@ if st.session_state.get('current_context') is not None:
         n_dan = st.slider("Danceability", 0, 100, int(np.clip(ctx[2], 0, 1) * 100))
         
         st.markdown("**SOUND**")
-        # Tempo sempre in BPM per coerenza fisica
         def_tem = float(np.clip(start_vals[3], 40, 200)) if scaler else float(np.clip(ctx[3], 40, 200))
         def_lou = float(np.clip(start_vals[4], -60, 0)) if scaler else float(np.clip(ctx[4], -60, 0))
-        
         n_tem = st.slider("Tempo (BPM)", 40.0, 200.0, def_tem) 
         n_lou = st.slider("Loudness (dB)", -60.0, 0.0, def_lou)
         
@@ -306,24 +327,17 @@ if st.session_state.get('current_context') is not None:
         submitted = st.form_submit_button("APPLICA & RIGENERA")
         
         if submitted:
-            # 1. Normalizzazione Input Slider -> 0-1
             raw_target = [
                 n_en / 100.0, n_val / 100.0, n_dan / 100.0,
                 n_tem, n_lou, n_spe,
                 n_aco / 100.0, n_ins / 100.0, n_liv / 100.0
             ]
-            
             final_target_norm = raw_target
-            # 2. Se abbiamo lo scaler, trasformiamo i valori reali (es. 120BPM) in valori AI (0.5)
             if scaler:
-                try:
-                    final_target_norm = scaler.transform([raw_target])[0]
-                except:
-                    pass
+                try: final_target_norm = scaler.transform([raw_target])[0]
+                except: pass
 
             st.session_state.current_context = final_target_norm
-            
-            # Creiamo dict per il recommender
             cols = st.session_state.recommender.audio_cols
             manual_dict = dict(zip(cols, final_target_norm))
             
@@ -347,11 +361,9 @@ else:
 # --- GENERAZIONE ---
 c1, col_gen, c3 = st.columns([1, 2, 1])
 with col_gen:
-    # Label Dinamica
-    btn_label = "GENERA PROSSIMA (⚡ Instant)" if q_len > 0 else "GENERA NUOVO BATCH (🐢 Lento)"
+    btn_label = "GENERA PROSSIMA (⚡ Instant)" if q_len > 0 else "AVVIA SESSIONE (🐢 Load)"
     
     if st.button(btn_label, type="primary", key="main_gen"):
-        # Mostra spinner solo se la coda è vuota
         if q_len == 0:
             with st.spinner("L'AI sta scansionando il database..."):
                 if generate_new_recommendation():
@@ -374,11 +386,8 @@ if st.session_state.suggestion_made and st.session_state.current_track:
         else:
             st.warning("Anteprima non disponibile per questa traccia.")
 
-    # 2. Colonna Destra: Feature List (Track DNA - Tunebat Style)
     with col_stats:
         audio_cols = ['energy', 'valence', 'danceability', 'tempo', 'loudness', 'speechiness', 'acousticness', 'instrumentalness', 'liveness']
-        
-        # --- PREPARAZIONE DATI REALI (DENORMALIZZAZIONE SICURA) ---
         norm_vector = np.array([track.get(c, 0) for c in audio_cols]).reshape(1, -1)
         real_data_map = {}
         if scaler:
@@ -404,18 +413,55 @@ if st.session_state.suggestion_made and st.session_state.current_track:
         html_stats += "</div>"
         st.markdown(html_stats, unsafe_allow_html=True)
 
-    # Info Testuali
     st.markdown(f"<div class='track-name'>{track['name']}</div>", unsafe_allow_html=True)
     st.markdown(f"<div class='artist-name'>{track['artist']}</div>", unsafe_allow_html=True)
     g = str(track.get('genres', 'unknown')).title()
     y = int(track.get('year', 0))
     st.markdown(f"<div class='meta-tag'>{y} • {g}</div>", unsafe_allow_html=True)
 
-    # BOTTONI
-    b1, b_save, b_skip, b4 = st.columns([1, 2, 2, 1])
-    with b_save:
-        if st.button("SALVA", key="btn_save"):
+    # --- BOTTONI (Like, Dislike, Save) ---
+    c_dislike, c_like, c_save = st.columns([1, 1, 2])
+    
+    # 👎 DISLIKE (Scende Vibe, Blacklist Sessione, Next)
+    with c_dislike:
+        if st.button("👎 DISLIKE", key="btn_dislike"):
+            update_vibe(-10) # Scende Vibe
+            
+            # --- MODIFICA RICHIESTA: AGGIUNGI A BLACKLIST SESSIONE ---
+            st.session_state.session_blacklist.append(track['id'])
+            
+            st.session_state.past_track_ids.append(str(track['id']))
+            generate_new_recommendation()
+            st.rerun()
+
+    # 👍 LIKE (Sale Vibe, Allena AI, Blacklist Sessione, Next)
+    with c_like:
+        if st.button("👍 LIKE", key="btn_like"):
+            update_vibe(+10) # Sale Vibe
+            
+            # 1. Allenamento Oracle
+            cols = st.session_state.recommender.audio_cols
+            feats = np.array([track[k] for k in cols])
+            if st.session_state.oracle:
+                st.session_state.oracle.train_incremental(st.session_state.current_context, feats)
+            
+            # 2. Aggiorna Contesto
+            st.session_state.current_context = calculate_avalanche_context(st.session_state.current_context, feats, st.session_state.song_count)
+            
+            # --- MODIFICA RICHIESTA: AGGIUNGI A BLACKLIST SESSIONE ---
+            # Anche se piace, non vogliamo risentirla subito nella stessa sessione
+            st.session_state.session_blacklist.append(track['id'])
+            
+            st.session_state.past_track_ids.append(str(track['id']))
+            generate_new_recommendation() 
+            st.rerun()
+
+    # 💾 SAVE (Sale Vibe Molto, Allena AI, Salva File, Next)
+    with c_save:
+        if st.button("💾 SALVA IN LIBRARY", key="btn_save"):
             with st.status("Salvataggio...", expanded=False) as status:
+                update_vibe(+20) # Vibe sale molto
+                
                 real_g, real_p = get_track_details(track['id'])
                 cols = st.session_state.recommender.audio_cols
                 feats = np.array([track[k] for k in cols])
@@ -428,75 +474,52 @@ if st.session_state.suggestion_made and st.session_state.current_track:
                 
                 if tid: add_track_to_playlist(tid)
                 
-                with open(BLACKLIST_PATH, "a") as f: 
-                    f.write(f"{track['id']}\n")
+                # --- MODIFICA RICHIESTA: AGGIUNGI A BLACKLIST SESSIONE ---
+                st.session_state.session_blacklist.append(track['id'])
                 
+                # Salva su CSV
                 new_row = {'id': track['id'], 'name': track['name'], 'artist': track['artist'], 'genres': real_g, 'popularity': real_p, 'year': track.get('year'), **{k: track[k] for k in cols}}
                 df_new = pd.DataFrame([new_row])
                 df_new.to_csv(HISTORY_PATH, mode='a', header=not os.path.exists(HISTORY_PATH), index=False)
                 st.session_state.history_df = pd.concat([st.session_state.history_df, df_new], ignore_index=True)
                 
-                # Generazione successiva (usa la coda istantanea!)
                 generate_new_recommendation()
                 status.update(label="Salvato!", state="complete")
             st.rerun()
 
-    with b_skip:
-        if st.button("SKIP", key="btn_skip"):
-            # SKIP è veloce ora!
-            with open(BLACKLIST_PATH, "a") as f: 
-                f.write(f"{track['id']}\n")
-            st.session_state.past_track_ids.append(str(track['id']))
-            generate_new_recommendation() # Prende dalla coda
-            st.rerun()
-
 st.markdown("---")
 
+# --- GRAFICO VIBE (SATISFACTION) ---
+st.markdown("<div style='letter-spacing: 2px; font-weight: 900; color: #444; margin-top:20px; font-size: 0.8rem;'>SESSION VIBE</div>", unsafe_allow_html=True)
+vibe_data = pd.DataFrame(st.session_state.vibe_history, columns=['Vibe'])
+st.line_chart(vibe_data, height=150, color='#1DB954')
+
 # --- HISTORY & RADAR ---
-st.markdown("<div style='letter-spacing: 5px; font-weight: 900; color: #444; margin-top:20px; font-size: 0.7rem;'>LATEST DISCOVERIES</div>", unsafe_allow_html=True)
-if st.session_state.history_df is not None:
-    recent = st.session_state.history_df[['name', 'artist']].tail(50).iloc[::-1].reset_index(drop=True)
-    total = len(recent)
-    html_h = "<div class='history-container'><table class='history-table'>"
-    for i, r in recent.iterrows():
-        num = str(total - i).zfill(2)
-        html_h += f"<tr><td class='track-number'>{num}</td><td class='track-title-cell'>{r['name']} <span class='history-row-artist'> // {r['artist']}</span></td></tr>"
-    html_h += "</table></div>"
-    st.markdown(html_h, unsafe_allow_html=True)
+col_hist, col_radar = st.columns([1, 1])
 
-# Radar
-st.markdown("<div style='letter-spacing: 2px; font-weight: 900; color: #444; margin-top:20px; font-size: 0.8rem;'>TARGET DNA</div>", unsafe_allow_html=True)
+with col_hist:
+    st.markdown("<div style='letter-spacing: 5px; font-weight: 900; color: #444; margin-top:20px; font-size: 0.7rem;'>LATEST DISCOVERIES</div>", unsafe_allow_html=True)
+    if st.session_state.history_df is not None:
+        recent = st.session_state.history_df[['name', 'artist']].tail(50).iloc[::-1].reset_index(drop=True)
+        total = len(recent)
+        html_h = "<div class='history-container'><table class='history-table'>"
+        for i, r in recent.iterrows():
+            num = str(total - i).zfill(2)
+            html_h += f"<tr><td class='track-number'>{num}</td><td class='track-title-cell'>{r['name']} <span class='history-row-artist'> // {r['artist']}</span></td></tr>"
+        html_h += "</table></div>"
+        st.markdown(html_h, unsafe_allow_html=True)
 
-vector_to_plot = st.session_state.predicted_vector
-if vector_to_plot is None and st.session_state.current_context is not None:
-    vector_to_plot = st.session_state.current_context 
+with col_radar:
+    st.markdown("<div style='letter-spacing: 2px; font-weight: 900; color: #444; margin-top:20px; font-size: 0.8rem;'>TARGET DNA</div>", unsafe_allow_html=True)
+    vector_to_plot = st.session_state.predicted_vector
+    if vector_to_plot is None and st.session_state.current_context is not None:
+        vector_to_plot = st.session_state.current_context 
 
-if vector_to_plot is not None:
-    labels = ['Energy', 'Valence', 'Dance', 'Tempo', 'Loud', 'Speech', 'Acoust', 'Instr', 'Live']
-    vec = np.clip(vector_to_plot[:9], 0, 1)
-    df_r = pd.DataFrame(dict(r=vec, theta=labels))
-    
-    fig = px.line_polar(df_r, r='r', theta='theta', line_close=True, range_r=[0, 1])
-    
-    fig.update_layout(
-        paper_bgcolor='rgba(0,0,0,0)', 
-        polar=dict(
-            bgcolor='rgba(0,0,0,0)', 
-            radialaxis=dict(visible=False), 
-            angularaxis=dict(color='#888')
-        ), 
-        showlegend=False, 
-        height=350,
-        margin=dict(l=40, r=40, t=20, b=20)
-    )
-    
-    fig.update_traces(
-        line_color='#1DB954', 
-        fill='toself', 
-        fillcolor='rgba(29, 185, 84, 0.15)',
-        mode='lines+markers',
-        marker=dict(size=6),
-        hovertemplate='<b>%{theta}</b>: %{r:.2f}<extra></extra>'
-    )
-    
-    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+    if vector_to_plot is not None:
+        labels = ['Energy', 'Valence', 'Dance', 'Tempo', 'Loud', 'Speech', 'Acoust', 'Instr', 'Live']
+        vec = np.clip(vector_to_plot[:9], 0, 1)
+        df_r = pd.DataFrame(dict(r=vec, theta=labels))
+        fig = px.line_polar(df_r, r='r', theta='theta', line_close=True, range_r=[0, 1])
+        fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', polar=dict(bgcolor='rgba(0,0,0,0)', radialaxis=dict(visible=False), angularaxis=dict(color='#888')), showlegend=False, height=250, margin=dict(l=40, r=40, t=20, b=20))
+        fig.update_traces(line_color='#1DB954', fill='toself', fillcolor='rgba(29, 185, 84, 0.15)', mode='lines+markers', marker=dict(size=6))
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})

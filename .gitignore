@@ -31,3 +31,10 @@ data/user_history.csv
 data/user_history.csv
 data/tracks.index
 data/tracks.db
+data/retrieval_matrix.npy
+data/pca.joblib
+data/feature_matrix.npy
+data/track_ids.pkl
+data/scaler.save
+data/scaler.save
+data/user_history.csv

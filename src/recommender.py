@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 import os
 import joblib
+import ast
+import re
 
 # --- IMPORT INTELLIGENTE ---
 try:
@@ -13,11 +15,10 @@ class SongRecommender:
     def __init__(self, dataset_path=None):
         current_dir = os.path.dirname(os.path.abspath(__file__))
         
-        # 1. Gestione Percorso Database
+        # 1. Configurazione Percorsi
         if dataset_path:
             self.tracks_path = dataset_path
         else:
-            # Tenta diversi percorsi standard
             path_attempt_1 = os.path.normpath(os.path.join(current_dir, '..', 'data', 'tracks_processed.csv'))
             path_attempt_2 = os.path.join(current_dir, 'tracks_processed.csv')
             
@@ -28,214 +29,203 @@ class SongRecommender:
             else:
                 self.tracks_path = os.path.normpath(os.path.join(current_dir, '..', 'data', 'tracks_db.csv'))
 
-        # 2. Gestione Percorso Oracle e Blacklist
         self.oracle_path = os.path.join(current_dir, '..', 'data', 'oracle.pkl')
-        self.blacklist_path = os.path.join(current_dir, '..', 'data', 'blacklist.txt')
-
+        
         self.audio_cols = ['energy', 'valence', 'danceability', 'tempo', 'loudness', 
                            'speechiness', 'acousticness', 'instrumentalness', 'liveness']
 
-        # 3. Caricamento Dati
+        # 2. Caricamento Dati
         print(f"✅ Recommender: Caricamento DB da {self.tracks_path}")
         if os.path.exists(self.tracks_path):
-            # Ottimizzazione memoria: float32
             self.df_tracks = pd.read_csv(self.tracks_path, low_memory=False)
-            
-            # --- PRE-CALCOLO MATRICE NUMPY (Il segreto della velocità) ---
             print("⚙️ Ottimizzazione Matrice Audio...")
-            # 1. Estraiamo solo i numeri e convertiamo in float32 (metà RAM)
             self.matrix = self.df_tracks[self.audio_cols].fillna(0.5).values.astype('float32')
             
-            # 2. Normalizziamo subito i vettori (L2 Norm)
-            # In questo modo similarity = dot_product, molto più veloce
             norm = np.linalg.norm(self.matrix, axis=1)[:, np.newaxis]
-            norm[norm == 0] = 1e-10 # Evita divisione per zero
+            norm[norm == 0] = 1e-10 
             self.matrix_normalized = self.matrix / norm
             print("✅ Motore Audio Pronto.")
-            
         else:
-            print(f"⚠️ ATTENZIONE: Database non trovato in {self.tracks_path}")
+            print(f"⚠️ ATTENZIONE: Database non trovato.")
             self.df_tracks = pd.DataFrame()
             self.matrix_normalized = None
 
-        # Caricamento Modello AI Oracle
+        # 3. Caricamento Oracle
         if os.path.exists(self.oracle_path):
-            try:
-                self.oracle = joblib.load(self.oracle_path)
-            except:
-                self.oracle = None
-        else:
-            self.oracle = None
+            try: self.oracle = joblib.load(self.oracle_path)
+            except: self.oracle = None
+        else: self.oracle = None
 
     def _get_current_context(self, user_history_df):
-        """Calcola il vettore medio pesato (Avalanche) della storia utente."""
-        if user_history_df.empty:
-            return np.array([0.5]*9)
-            
-        current_context = user_history_df.iloc[0][self.audio_cols].values
-        for i in range(1, len(user_history_df)):
-            track_data = user_history_df.iloc[i][self.audio_cols].values
+        if user_history_df.empty: return np.array([0.5]*9)
+        recent_history = user_history_df.tail(20).reset_index(drop=True)
+        current_context = recent_history.iloc[0][self.audio_cols].values
+        for i in range(1, len(recent_history)):
+            track_data = recent_history.iloc[i][self.audio_cols].values
             current_context = calculate_avalanche_context(current_context, track_data, n=5)
         return current_context
     
-    def recommend(self, user_history_df, k=20, target_features=None):
-        """
-        Genera raccomandazioni usando Prodotto Scalare NumPy (Velocissimo).
-        Accetta 'target_features' opzionale per controllo manuale (slider).
-        """
-        if self.df_tracks.empty or self.matrix_normalized is None:
-            return pd.DataFrame(), np.zeros(9)
+    def _extract_genres(self, genre_str):
+        if pd.isna(genre_str) or str(genre_str) == '[]': return set()
+        raw_set = set()
+        try:
+            if str(genre_str).strip().startswith('['):
+                raw_list = ast.literal_eval(genre_str)
+                if isinstance(raw_list, list):
+                    for g in raw_list: raw_set.add(str(g).lower())
+            else:
+                for g in str(genre_str).split(','):
+                    raw_set.add(g.strip().lower())
+        except: return set()
+            
+        expanded_set = set(raw_set)
+        for g in raw_set:
+            words = g.split()
+            if len(words) > 1: expanded_set.update(words)
+        return expanded_set
 
-        # 1. PREVISIONE VETTORE TARGET
-        # A. Manuale (dagli Slider)
+    def recommend(self, user_history_df, k=20, target_features=None, session_blacklist=None):
+        if self.df_tracks.empty: return pd.DataFrame(), np.zeros(9)
+
+        # --- STEP 0: DEFINISCI CHI ESCLUDERE ---
+        exclude_ids = []
+        if session_blacklist: exclude_ids.extend(session_blacklist)
+        if 'id' in user_history_df.columns: exclude_ids.extend(user_history_df['id'].unique().tolist())
+        
+        # --- STEP 1: LOGICA "I MIEI ARTISTI" (Priorità) ---
+        my_artists = set()
+        if not user_history_df.empty:
+            recent_50 = user_history_df.tail(50)
+            if 'artist' in recent_50.columns:
+                my_artists = set(recent_50['artist'].unique())
+
+        familiar_recs = pd.DataFrame()
+        
+        if my_artists:
+            artist_pool = self.df_tracks[
+                (self.df_tracks['artist'].isin(my_artists)) & 
+                (~self.df_tracks['id'].isin(exclude_ids))
+            ].copy()
+            
+            if not artist_pool.empty:
+                # Ordine: Prima le più recenti
+                artist_pool = artist_pool.sort_values(by='year', ascending=False)
+                
+                # Prendiamo fino al 60% dei posti
+                limit_familiar = int(k * 0.6) 
+                familiar_recs = artist_pool.head(limit_familiar).copy()
+                
+                familiar_recs['reason_text'] = "Tuo Artista (Nuova)"
+                familiar_recs['match_percentage'] = 100 
+                familiar_recs['audio_score'] = 1.0 
+
+        # --- STEP 2: LOGICA "SCOPERTA" (Vector Search) ---
         if target_features is not None:
             if isinstance(target_features, dict):
                  predicted_vector = np.array([target_features.get(c, 0.5) for c in self.audio_cols])
             else:
                  predicted_vector = np.array(target_features)
             predicted_vector = predicted_vector.reshape(1, -1)
-        
-        # B. Automatico (AI Oracle)
         elif hasattr(self, 'oracle') and self.oracle:
             current_context = self._get_current_context(user_history_df)
             predicted_vector = self.oracle.predict_target(current_context).reshape(1, -1)
-        
-        # C. Fallback (Media semplice)
         else:
-            valid_cols = [c for c in self.audio_cols if c in user_history_df.columns]
-            if valid_cols:
-                predicted_vector = user_history_df[valid_cols].mean().values.reshape(1, -1)
-            else:
-                predicted_vector = np.array([0.5]*9).reshape(1, -1)
+            valid = [c for c in self.audio_cols if c in user_history_df.columns]
+            if valid: predicted_vector = user_history_df[valid].mean().values.reshape(1, -1)
+            else: predicted_vector = np.array([0.5]*9).reshape(1, -1)
 
-        # Aggiunta Rumore
         noise = np.random.normal(0, 0.02, predicted_vector.shape)
         target_vector = np.clip(predicted_vector + noise, 0, 1).astype('float32')
-
-        # 2. CALCOLO SIMILARITÀ VETTORIALE (Core Veloce)
-        # Normalizziamo il target
-        target_norm_val = np.linalg.norm(target_vector)
-        if target_norm_val == 0: target_norm_val = 1e-10
-        target_normalized = target_vector / target_norm_val
+        target_norm = np.linalg.norm(target_vector)
+        if target_norm == 0: target_norm = 1e-10
+        target_normalized = target_vector / target_norm
         
-        # DOT PRODUCT: Calcola la similarità per TUTTI i brani in un colpo solo
-        # (N_brani, 9) @ (9, 1) -> (N_brani, 1)
         scores = np.dot(self.matrix_normalized, target_normalized.T).flatten()
         
-        # Assegniamo lo score ai candidati
-        # Lavoriamo su una copia dei metadati per non toccare la matrice originale
-        candidates = self.df_tracks.copy()
-        candidates['audio_score'] = scores
+        discovery_pool = self.df_tracks.copy()
+        discovery_pool['audio_score'] = scores
 
-        # 3. FILTRAGGIO (Blacklist e History)
-        exclude_ids = []
-        if os.path.exists(self.blacklist_path):
-            with open(self.blacklist_path, 'r') as f:
-                exclude_ids.extend([line.strip() for line in f.readlines()])
+        user_genres = set()
+        if 'genres' in user_history_df.columns:
+            for g_str in user_history_df['genres'].dropna():
+                user_genres.update(self._extract_genres(g_str))
         
-        if 'id' in user_history_df.columns:
-            exclude_ids.extend(user_history_df['id'].unique().tolist())
+        ids_already_picked = familiar_recs['id'].tolist() if not familiar_recs.empty else []
+        ids_to_exclude_discovery = exclude_ids + ids_already_picked
         
-        # Filtro
-        candidates_clean = candidates[~candidates['id'].isin(exclude_ids)]
-
-        # Panic Mode: se abbiamo filtrato tutto, teniamo solo la history fuori
-        if candidates_clean.empty:
-            blacklist_only = []
-            if os.path.exists(self.blacklist_path):
-                 with open(self.blacklist_path, 'r') as f:
-                    blacklist_only = [line.strip() for line in f.readlines()]
-            candidates = candidates[~candidates['id'].isin(blacklist_only)]
-        else:
-            candidates = candidates_clean
-
-        # Fallback Finale se ancora vuoto
-        if candidates.empty:
-            candidates = self.df_tracks.sample(n=min(k, len(self.df_tracks))).copy()
-            candidates['audio_score'] = 0.5
-
-        # 4. CALCOLO SCORE SECONDARI
-        target_year = user_history_df['year'].mean() if not user_history_df.empty and 'year' in user_history_df.columns else 2022
-        avg_pop = user_history_df['popularity'].mean() if not user_history_df.empty and 'popularity' in user_history_df else 50
-        top_artists_set = set(user_history_df['artist'].unique()) if not user_history_df.empty and 'artist' in user_history_df else set()
-
-        # Score Anno
-        if 'year' in candidates.columns:
-            candidates['year_diff'] = np.abs(candidates['year'] - target_year)
-            candidates['year_score'] = 1 / (1 + (candidates['year_diff'] * 0.1))
-        else:
-            candidates['year_score'] = 0.5
-
-        # Score Popolarità
-        if 'popularity' in candidates.columns:
-            candidates['pop_diff'] = np.abs(candidates['popularity'] - avg_pop)
-            candidates['pop_score'] = 1 / (1 + (candidates['pop_diff'] * 0.05))
-        else:
-            candidates['pop_score'] = 0.5
+        discovery_pool = discovery_pool[~discovery_pool['id'].isin(ids_to_exclude_discovery)]
         
-        # Score Artista
-        candidates['is_top_artist'] = False
-        if top_artists_set and 'artist' in candidates.columns:
-            candidates['is_top_artist'] = candidates['artist'].isin(top_artists_set)
+        if user_genres:
+            def has_common_genre(row_g):
+                g_set = self._extract_genres(row_g)
+                return not g_set.isdisjoint(user_genres) if g_set else False
+            
+            top_idx = np.argsort(discovery_pool['audio_score'].values)[::-1][:10000]
+            subset = discovery_pool.iloc[top_idx].copy()
+            valid_mask = subset['genres'].apply(has_common_genre)
+            discovery_final = subset[valid_mask].copy()
+        else:
+            discovery_final = discovery_pool.sort_values(by='audio_score', ascending=False).head(5000)
 
-        # 5. PESATURA FINALE
-        candidates['final_score'] = (
-            (candidates['audio_score'] * 0.65) + 
-            (candidates['year_score'] * 0.15) + 
-            (candidates['pop_score'] * 0.20)
+        target_year = user_history_df['year'].mean() if 'year' in user_history_df.columns else 2022
+        if 'year' in discovery_final.columns:
+            discovery_final['year_score'] = 1 / (1 + (np.abs(discovery_final['year'] - target_year) * 0.1))
+        else: discovery_final['year_score'] = 0.5
+
+        discovery_final['final_score'] = (
+            (discovery_final['audio_score'] * 0.7) + 
+            (discovery_final['year_score'] * 0.3)
         )
         
-        if top_artists_set:
-            candidates.loc[candidates['is_top_artist'], 'final_score'] *= 1.25
-
-        # 6. SELEZIONE FINALE
-        def get_reason(row):
-            if row['is_top_artist']: return "DNA Artista"
-            if row['audio_score'] > 0.95: return "Vibe Identica"
-            if row['pop_score'] > 0.90: return "Hit Affine"
-            return "Consigliato"
-
-        sorted_candidates = candidates.sort_values(by='final_score', ascending=False)
+        discovery_final = discovery_final.sort_values(by='final_score', ascending=False)
         
-        # Deduplica
-        if 'name' in sorted_candidates.columns and 'artist' in sorted_candidates.columns:
-            sorted_candidates['unique_key'] = sorted_candidates['name'].astype(str) + sorted_candidates['artist'].astype(str)
-            sorted_candidates = sorted_candidates.drop_duplicates(subset='unique_key', keep='first')
-        
-        # Standard List
-        standard_list = []
-        artist_counts = {}
-        for _, row in sorted_candidates.iterrows():
-            if len(standard_list) >= (k - 5): break
-            a_name = str(row.get('artist', ''))
-            if artist_counts.get(a_name, 0) >= 2: continue
-            
-            row['reason_text'] = get_reason(row)
-            row['match_percentage'] = min(row['final_score'] * 100, 99)
-            standard_list.append(row)
-            artist_counts[a_name] = artist_counts.get(a_name, 0) + 1
-            
-        final_recs = pd.DataFrame(standard_list)
+        if 'name' in discovery_final.columns and 'artist' in discovery_final.columns:
+            discovery_final['unique_key'] = discovery_final['name'].astype(str) + discovery_final['artist'].astype(str)
+            discovery_final = discovery_final.drop_duplicates(subset='unique_key', keep='first')
 
-        # Wildcard (Se c'è spazio)
-        if len(final_recs) < k + 5:
-            # Prendi brani popolari non ancora selezionati
-            exclude_now = final_recs['id'].tolist() if not final_recs.empty else []
-            # Usiamo il dataframe filtrato 'candidates' che ha già gli score audio calcolati
-            wild_pool = candidates[
-                (~candidates['id'].isin(exclude_now)) & 
-                (candidates['popularity'] > 60) &
-                (candidates['audio_score'].between(0.3, 0.7)) # Abbastanza diversi ma non troppo
-            ]
-            
-            if not wild_pool.empty:
-                wildcards = wild_pool.sample(n=min(5, len(wild_pool))).copy()
-                wildcards['reason_text'] = "Wildcard (Novità)"
-                wildcards['match_percentage'] = wildcards['audio_score'] * 100
-                final_recs = pd.concat([final_recs, wildcards], ignore_index=True)
-
-        # Shuffle finale
-        if not final_recs.empty:
-            final_recs = final_recs.sample(frac=1).reset_index(drop=True)
+        slots_needed = k - len(familiar_recs)
+        discovery_recs = pd.DataFrame()
         
-        return final_recs, predicted_vector.flatten()
+        if slots_needed > 0:
+            temp_list = []
+            a_counts = {}
+            for _, row in discovery_final.iterrows():
+                if len(temp_list) >= slots_needed: break
+                a_name = str(row.get('artist', ''))
+                if a_counts.get(a_name, 0) >= 1: continue 
+                
+                row['reason_text'] = "Scoperta Simile"
+                row['match_percentage'] = min(row['final_score'] * 100, 99)
+                temp_list.append(row)
+                a_counts[a_name] = a_counts.get(a_name, 0) + 1
+            
+            discovery_recs = pd.DataFrame(temp_list)
+
+        # --- STEP 3: UNIONE & SHUFFLE INTELLIGENTE ---
+        # 1. Teniamo le prime 5 "Familiari" fisse in cima (Garanzia di qualità iniziale)
+        # 2. Mischiamo il resto (Familiari rimanenti + Scoperte)
+        
+        top_picks = pd.DataFrame()
+        mix_pool = pd.DataFrame()
+
+        if not familiar_recs.empty:
+            top_picks = familiar_recs.head(5) # Le prime 5 sono sacre
+            rest_familiar = familiar_recs.iloc[5:]
+            mix_pool = pd.concat([rest_familiar, discovery_recs], ignore_index=True)
+        else:
+            # Se non ci sono familiari, mischiamo tutto le scoperte tranne la prima
+            top_picks = discovery_recs.head(1)
+            mix_pool = discovery_recs.iloc[1:]
+
+        # Mischiamo il pool rimanente per evitare il blocco "solo scoperte" alla fine
+        if not mix_pool.empty:
+            mix_pool = mix_pool.sample(frac=1).reset_index(drop=True)
+
+        final_df = pd.concat([top_picks, mix_pool], ignore_index=True)
+        
+        if final_df.empty:
+            final_df = self.df_tracks.sample(n=k).copy()
+            final_df['reason_text'] = "Fallback"
+            final_df['match_percentage'] = 50
+
+        return final_df, predicted_vector.flatten()
