@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import numpy as np
 import os
+import sys
 import time
 import joblib
 from dotenv import load_dotenv
@@ -16,11 +17,16 @@ from fetch_userhistory import fetch_history
 
 # --- CONFIGURAZIONE PERCORSI ---
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+SRC_DIR = CURRENT_DIR
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
+
 DATA_DIR = os.path.normpath(os.path.join(CURRENT_DIR, '..', 'data'))
 HISTORY_PATH = os.path.join(DATA_DIR, 'user_history.csv')
 LIKED_PATH = os.path.join(DATA_DIR, 'liked.csv')
 DISLIKED_PATH = os.path.join(DATA_DIR, 'disliked.csv')
 SCALER_PATH = os.path.join(DATA_DIR, 'scaler.save')
+ORACLE_PATH = os.path.join(DATA_DIR, 'oracle.pkl')
 
 # Carica variabili ambiente
 load_dotenv()
@@ -169,7 +175,21 @@ st.markdown("""
 # --- 1. INIZIALIZZAZIONE ---
 if 'oracle' not in st.session_state:
     with st.spinner("Sintonizzando Billie AI-lish..."):
-        st.session_state.oracle = MusicOracle() 
+
+        try:
+            if os.path.exists(ORACLE_PATH):
+                st.session_state.oracle = joblib.load(ORACLE_PATH)
+            else:
+                st.session_state.oracle = MusicOracle()
+        
+        except ModuleNotFoundError:
+            st.sidebar.warning("Oracle rigenerato, cambio struttura")
+            st.session_state.oracle = MusicOracle()
+        except Exception as e:
+            st.sidebar.warning(f"Errore caricamento Oracle: {e}")
+            st.session_state.oracle = MusicOracle()
+
+
         try:
             st.session_state.recommender = SongRecommender()
         except Exception as e:
@@ -329,6 +349,23 @@ st.markdown("<div class='subtitle'>Artificial Music Agent</div>", unsafe_allow_h
 
 # --- SIDEBAR ---
 st.sidebar.header("CONTROL ROOM")
+if st.session_state.get('oracle') and st.session_state.oracle.loss_history:
+    n_trained = len(st.session_state.oracle.loss_history)
+    st.sidebar.success(f"🧠 Oracle: {n_trained} interazioni")
+    
+    # Mostra andamento Loss (deve scendere!)
+    if n_trained > 1:
+        first_loss = st.session_state.oracle.loss_history[0]
+        last_loss = st.session_state.oracle.loss_history[-1]
+        improvement = ((first_loss - last_loss) / first_loss) * 100
+        
+        st.sidebar.caption(f"📉 Loss iniziale: {first_loss:.4f}")
+        st.sidebar.caption(f"📉 Loss attuale: {last_loss:.4f}")
+        
+        if improvement > 0:
+            st.sidebar.caption(f"✅ Miglioramento: {improvement:.1f}%")
+        else:
+            st.sidebar.caption(f"⚠️ Loss in crescita (normale all'inizio)")
 st.sidebar.caption(f"Genre: {st.session_state.get('top_genre', '-')} | Artist: {st.session_state.get('top_artist', '-')}")
 
 # --- INDICATORE CODA ---
@@ -494,7 +531,59 @@ if st.session_state.suggestion_made and st.session_state.current_track:
             cols = st.session_state.recommender.audio_cols
             feats = np.array([track[k] for k in cols])
             if st.session_state.oracle:
+
+                print("\n" + "="*60)
+                print(f"🎵 LIKE - {track['name']} by {track['artist']}")
+                print("="*60)
+
+                #predizione priam del training
+                prediction_before = st.session_state.oracle.predict_target(st.session_state.current_context)
+                loss_count_before = len(st.session_state.oracle.loss_history)
+
+                print(f"Stato PRIMA DEL TRAINING:")
+                print(f"   • Training iterations: {loss_count_before}")
+
+                if loss_count_before > 0:
+                    print(f"   • Last loss: {st.session_state.oracle.loss_history[-1]:.6f}")
+
+                #TRAINING
                 st.session_state.oracle.train_incremental(st.session_state.current_context, feats)
+
+                loss_count_after = len(st.session_state.oracle.loss_history)
+                current_loss = st.session_state.oracle.loss_history[-1]
+
+                print(f"Stato dopo il training: ")
+                print(f"   • Training iterations: {loss_count_after}")
+                print(f"   • Current loss: {current_loss:.6f}")
+
+                # Confronto predizione
+                prediction_after = st.session_state.oracle.predict_target(st.session_state.current_context)
+                diff = np.abs(prediction_after - prediction_before).mean()
+                print(f"   • Cambio medio predizione: {diff:.6f}")
+            
+                # Confronto con target reale
+                error = np.abs(feats - prediction_after).mean()
+                print(f"   • Errore medio vs target: {error:.6f}")
+            
+                print("\n Predizione vs Realtà (prime 5 features):")
+                feature_names = ['Energy', 'Valence', 'Dance', 'Tempo', 'Loud']
+                for i, name in enumerate(feature_names):
+                    print(f"   • {name:12}: Pred={prediction_after[i]:.3f} | Real={feats[i]:.3f} | Diff={abs(prediction_after[i]-feats[i]):.3f}")
+            
+                # Andamento Loss
+                if loss_count_after > 1:
+                    loss_trend = st.session_state.oracle.loss_history[-5:]  # Ultimi 5
+                    print(f"\n📉 Loss trend (ultimi 5):")
+                    for idx, loss in enumerate(loss_trend, start=1):
+                        print(f"   {idx}. {loss:.6f}")
+            
+                print("="*60 + "\n")
+
+                #SALVATAGGIO
+                try:
+                    joblib.dump(st.session_state.oracle, ORACLE_PATH)
+                except Exception as e:
+                    st.warning(f"Oracle non salvato: {e}")
 
             # 2. Aggiorna Contesto
             st.session_state.current_context = calculate_avalanche_context(st.session_state.current_context, feats, st.session_state.song_count)
@@ -517,7 +606,28 @@ if st.session_state.suggestion_made and st.session_state.current_track:
                 feats = np.array([track[k] for k in cols])
                 
                 if st.session_state.oracle:
+
+                    print("\n" + "="*60)
+                    print(f"💾 SAVE - {track['name']} by {track['artist']}")
+                    print("="*60)   
+
+                    loss_count_before = len(st.session_state.oracle.loss_history)
+                    print(f"📊 Training iterations prima: {loss_count_before}")
+
+
                     st.session_state.oracle.train_incremental(st.session_state.current_context, feats)
+
+                    loss_count_after = len(st.session_state.oracle.loss_history)
+                    current_loss = st.session_state.oracle.loss_history[-1]
+                    print(f"📊 Training iterations dopo: {loss_count_after}")
+                    print(f"📊 Current loss: {current_loss:.6f}")
+                    print("="*60 + "\n")
+
+                    #salvataggio oracle su disco
+                    try:
+                        joblib.dump(st.session_state.oracle, ORACLE_PATH)
+                    except Exception as e:
+                        pass
                 
                 st.session_state.song_count += 1
                 st.session_state.current_context = calculate_avalanche_context(st.session_state.current_context, feats, st.session_state.song_count)

@@ -44,3 +44,4 @@ data/disliked.csv
 .spotify_cache
 data/saved_tracks.csv
 .spotify_cache
+data/oracle.pkl
