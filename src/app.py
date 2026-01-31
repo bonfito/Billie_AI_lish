@@ -18,7 +18,8 @@ from fetch_userhistory import fetch_history
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.normpath(os.path.join(CURRENT_DIR, '..', 'data'))
 HISTORY_PATH = os.path.join(DATA_DIR, 'user_history.csv')
-BLACKLIST_PATH = os.path.join(DATA_DIR, 'blacklist.txt')
+LIKED_PATH = os.path.join(DATA_DIR, 'liked.csv')
+DISLIKED_PATH = os.path.join(DATA_DIR, 'disliked.csv')
 SCALER_PATH = os.path.join(DATA_DIR, 'scaler.save')
 
 # Carica variabili ambiente
@@ -244,6 +245,25 @@ def generate_new_recommendation(manual_target=None):
             return False
     return False
 
+# --- FUNZIONE SALVATAGGIO FEEDBACK (LIKE / DISLIKE) ---
+def append_feedback_csv(csv_path, track_dict, real_g=None, real_p=None):
+    """Salva una traccia su un CSV dedicato (liked/disliked)"""
+    try:
+        cols = st.session_state.recommender.audio_cols
+        row = {
+            'id': track_dict.get('id'),
+            'name': track_dict.get('name'),
+            'artist': track_dict.get('artist'),
+            'genres': real_g if real_g is not None else track_dict.get('genres', 'unknown'),
+            'popularity': real_p if real_p is not None else track_dict.get('popularity', None),
+            'year': track_dict.get('year'),
+            **{k: track_dict.get(k, 0) for k in cols}
+        }
+        df_new = pd.DataFrame([row])
+        df_new.to_csv(csv_path, mode='a', header=not os.path.exists(csv_path), index=False)
+    except Exception as e:
+        st.warning(f"Impossibile salvare feedback su {os.path.basename(csv_path)}: {e}")
+
 # --- FUNZIONE AGGIORNAMENTO VIBE ---
 def update_vibe(points):
     """Aggiorna il grafico della vibe (0-100)"""
@@ -426,10 +446,14 @@ if st.session_state.suggestion_made and st.session_state.current_track:
     with c_dislike:
         if st.button("👎 DISLIKE", key="btn_dislike"):
             update_vibe(-10) # Scende Vibe
-            
-            # --- MODIFICA RICHIESTA: AGGIUNGI A BLACKLIST SESSIONE ---
+
+            # Salva su CSV dedicato (DISLIKED)
+            real_g, real_p = get_track_details(track['id'])
+            append_feedback_csv(DISLIKED_PATH, track, real_g, real_p)
+
+            # Anche se non piace, non vogliamo rivederla subito nella stessa sessione
             st.session_state.session_blacklist.append(track['id'])
-            
+
             st.session_state.past_track_ids.append(str(track['id']))
             generate_new_recommendation()
             st.rerun()
@@ -438,20 +462,23 @@ if st.session_state.suggestion_made and st.session_state.current_track:
     with c_like:
         if st.button("👍 LIKE", key="btn_like"):
             update_vibe(+10) # Sale Vibe
-            
+
+            # Salva su CSV dedicato (LIKED) - NON in user_history.csv
+            real_g, real_p = get_track_details(track['id'])
+            append_feedback_csv(LIKED_PATH, track, real_g, real_p)
+
             # 1. Allenamento Oracle
             cols = st.session_state.recommender.audio_cols
             feats = np.array([track[k] for k in cols])
             if st.session_state.oracle:
                 st.session_state.oracle.train_incremental(st.session_state.current_context, feats)
-            
+
             # 2. Aggiorna Contesto
             st.session_state.current_context = calculate_avalanche_context(st.session_state.current_context, feats, st.session_state.song_count)
-            
-            # --- MODIFICA RICHIESTA: AGGIUNGI A BLACKLIST SESSIONE ---
+
             # Anche se piace, non vogliamo risentirla subito nella stessa sessione
             st.session_state.session_blacklist.append(track['id'])
-            
+
             st.session_state.past_track_ids.append(str(track['id']))
             generate_new_recommendation() 
             st.rerun()

@@ -38,3 +38,7 @@ data/track_ids.pkl
 data/scaler.save
 data/scaler.save
 data/user_history.csv
+data/liked.csv
+data/disliked.csv
+.spotify_cache
+.spotify_cache
