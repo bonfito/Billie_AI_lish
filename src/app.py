@@ -275,25 +275,48 @@ def update_vibe(points):
         st.session_state.vibe_history.pop(0)
 
 # --- 2. CARICAMENTO STORIA ---
+
+@st.cache_data(show_spinner=False)
+def load_data(history_path: str) -> pd.DataFrame:
+    """Carica lo storico da CSV (se esiste)."""
+    if os.path.exists(history_path):
+        return pd.read_csv(history_path)
+    return pd.DataFrame()
+
+# --- AUTO-FETCH HISTORY ALL'AVVIO (UNA VOLTA PER SESSIONE) ---
+if 'history_fetched' not in st.session_state:
+    try:
+        fetch_history()
+    except Exception:
+        # Non blocchiamo l'app se il fetch fallisce
+        pass
+    st.session_state.history_fetched = True
+    # Se il fetch ha scritto un nuovo CSV, resettiamo la cache
+    try:
+        load_data.clear()
+    except Exception:
+        pass
+
 if 'history_df' not in st.session_state:
     try:
-        if os.path.exists(HISTORY_PATH):
-            history_df = pd.read_csv(HISTORY_PATH)
+        history_df = load_data(HISTORY_PATH)
+        if history_df is not None and not history_df.empty:
             st.session_state.history_df = history_df
             features = st.session_state.recommender.audio_cols
             valid = [c for c in features if c in history_df.columns]
             if valid:
                 st.session_state.current_context = history_df[valid].mean().values
                 st.session_state.song_count = len(history_df)
-                
+
                 genre_col = 'genres' if 'genres' in history_df.columns else 'genre'
                 if genre_col in history_df.columns:
                     v_gen = history_df[~history_df[genre_col].isin(['unknown', 'nan'])][genre_col]
                     st.session_state.top_genre = v_gen.mode()[0].title() if not v_gen.empty else "N/A"
                 v_art = history_df[~history_df['artist'].isin(['unknown', 'nan'])]['artist']
                 st.session_state.top_artist = v_art.mode()[0] if not v_art.empty else "N/A"
-        else: raise FileNotFoundError()
-    except:
+        else:
+            raise FileNotFoundError()
+    except Exception:
         st.session_state.history_df = None
         st.session_state.current_context = np.array([0.5] * 9)
         st.session_state.song_count = 0
