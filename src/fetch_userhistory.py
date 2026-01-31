@@ -132,9 +132,9 @@ def enrich_metadata(df, sp):
             artists_info = sp.artists(batch)
             for a in artists_info['artists']:
                 if a:
-                    genres = a.get('genres', [])
-                    # Prendiamo il primo genere o 'unknown'
-                    genre_val = genres[0] if genres else 'unknown'
+                    genres = a.get('genres', []) or []
+                    # Salviamo TUTTI i generi (se presenti) in un'unica stringa separata da '|'
+                    genre_val = "|".join(genres) if genres else 'unknown'
                     artist_genre_map[a['id']] = genre_val
         except Exception as e:
             print(f"Errore batch artists: {e}")
