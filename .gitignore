@@ -42,3 +42,4 @@ data/liked.csv
 data/disliked.csv
 .spotify_cache
 .spotify_cache
+data/saved_tracks.csv
