@@ -16,11 +16,7 @@ def process_data():
         print("Caricamento dataset in corso...")
         df = pd.read_csv(input_path, low_memory=False)
     else:
-<<<<<<< Updated upstream
-        print(f"Errore: File {input_path} non trovato")
-=======
         print("file track_db.csv non trovato")
->>>>>>> Stashed changes
         return 
     
     if not os.path.exists(scaler_path):
