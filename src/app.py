@@ -33,9 +33,15 @@ ORACLE_PATH = os.path.join(DATA_DIR, 'oracle.pkl')
 load_dotenv()
 
 # --- CARICAMENTO SCALER ---
+SCALER_FEATURES = None
 try:
-    scaler = joblib.load(SCALER_PATH)
-except Exception as e:
+    payload = joblib.load(SCALER_PATH)
+    if isinstance(payload, dict) and "scaler" in payload:
+        scaler = payload.get("scaler")
+        SCALER_FEATURES = payload.get("features")
+    else:
+        scaler = payload
+except Exception:
     scaler = None
 
 # --- CONFIGURAZIONE PAGINA ---
@@ -418,13 +424,18 @@ if st.session_state.suggestion_made and st.session_state.current_track:
 
     with col_stats:
         audio_cols = ['energy', 'valence', 'danceability', 'tempo', 'loudness', 'speechiness', 'acousticness', 'instrumentalness', 'liveness']
-        norm_vector = np.array([track.get(c, 0) for c in audio_cols]).reshape(1, -1)
+
+        # Se lo scaler salva l'ordine delle feature, usiamolo per inverse_transform
+        features_for_scaler = SCALER_FEATURES if SCALER_FEATURES else audio_cols
+        norm_vector = np.array([track.get(c, 0) for c in features_for_scaler]).reshape(1, -1)
+
         real_data_map = {}
         if scaler:
             try:
                 real_vector = scaler.inverse_transform(norm_vector)[0]
-                real_data_map = dict(zip(audio_cols, real_vector))
-            except: pass 
+                real_data_map = dict(zip(features_for_scaler, real_vector))
+            except:
+                pass
         
         display_feats = audio_cols 
         html_stats = "<div class='feature-list'><div style='color:#fff; font-weight:900; margin-bottom:10px; text-transform:uppercase; letter-spacing:2px; font-size:0.9rem;'>Track DNA</div>"

@@ -126,8 +126,21 @@ def process_data():
 
     print("Normalizzazione feature audio con Scaler esistente...")
     try:
-        scaler = joblib.load(scaler_path)
-        df_clean[audio_features] = scaler.transform(df_clean[audio_features])
+        payload = joblib.load(scaler_path)
+        if isinstance(payload, dict) and "scaler" in payload:
+            scaler = payload.get("scaler")
+            features = payload.get("features", audio_features)
+        else:
+            scaler = payload
+            features = audio_features
+
+        # garantiamo che tutte le feature esistano e siano nell'ordine giusto
+        for c in features:
+            if c not in df_clean.columns:
+                df_clean[c] = np.nan
+
+        df_clean[features] = df_clean[features].fillna(df_clean[features].mean(numeric_only=True)).fillna(0.5)
+        df_clean[features] = scaler.transform(df_clean[features])
     except Exception as e:
         print(f"Errore critico durante la normalizzazione: {e}")
         return

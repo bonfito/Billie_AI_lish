@@ -346,7 +346,9 @@ def fetch_history():
     scaler = MinMaxScaler()
     scaler.fit(ref_df[audio_cols])
     
-    joblib.dump(scaler, SCALER_FILE)
+    joblib.dump({"scaler": scaler, "features": audio_cols}, SCALER_FILE)
+
+    
     df_new[audio_cols] = scaler.transform(df_new[audio_cols])
 
     # 6. Merge
