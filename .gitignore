@@ -46,3 +46,4 @@ data/saved_tracks.csv
 .spotify_cache
 data/oracle.pkl
 data/oracle.pkl
+data/oracle.pkl
