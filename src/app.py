@@ -23,6 +23,7 @@ if SRC_DIR not in sys.path:
 
 DATA_DIR = os.path.normpath(os.path.join(CURRENT_DIR, '..', 'data'))
 HISTORY_PATH = os.path.join(DATA_DIR, 'user_history.csv')
+PLAYLIST_SAVED_PATH = os.path.join(DATA_DIR, 'playlist_saved.csv')
 LIKED_PATH = os.path.join(DATA_DIR, 'liked.csv')
 DISLIKED_PATH = os.path.join(DATA_DIR, 'disliked.csv')
 SCALER_PATH = os.path.join(DATA_DIR, 'scaler.save')
@@ -637,11 +638,10 @@ if st.session_state.suggestion_made and st.session_state.current_track:
                 # --- MODIFICA RICHIESTA: AGGIUNGI A BLACKLIST SESSIONE ---
                 st.session_state.session_blacklist.append(track['id'])
                 
-                # Salva su CSV
+                # Salva su CSV dedicato (playlist_saved.csv) e NON in user_history.csv
                 new_row = {'id': track['id'], 'name': track['name'], 'artist': track['artist'], 'genres': real_g, 'popularity': real_p, 'year': track.get('year'), **{k: track[k] for k in cols}}
                 df_new = pd.DataFrame([new_row])
-                df_new.to_csv(HISTORY_PATH, mode='a', header=not os.path.exists(HISTORY_PATH), index=False)
-                st.session_state.history_df = pd.concat([st.session_state.history_df, df_new], ignore_index=True)
+                df_new.to_csv(PLAYLIST_SAVED_PATH, mode='a', header=not os.path.exists(PLAYLIST_SAVED_PATH), index=False)
                 
                 generate_new_recommendation()
                 status.update(label="Salvato!", state="complete")
