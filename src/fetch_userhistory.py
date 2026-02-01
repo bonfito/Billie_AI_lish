@@ -191,11 +191,7 @@ def fetch_history():
                 print(f"Cronologia esistente trovata: {len(df_existing)} brani.")
                 print(f"Ultimo ascolto registrato: {last_timestamp}")
                 
-                # --- RETROACTIVE UPDATE ---
-                # Aggiorniamo i metadati (Popolarità e Genere) anche per le vecchie canzoni
-                df_existing = enrich_metadata(df_existing, sp)
-                # --------------------------
-                
+                                
         except Exception as e:
             print(f"Errore lettura cronologia esistente: {e}")
     else:
