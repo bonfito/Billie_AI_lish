@@ -241,7 +241,7 @@ def generate_new_recommendation(manual_target=None):
 
             # --- CONTROLLO ANTI-CRASH ---
             if recs_df is None or recs_df.empty:
-                st.warning("⚠️ Nessuna canzone trovata. I filtri potrebbero essere troppo stretti.")
+                st.warning("Nessuna canzone trovata. I filtri potrebbero essere troppo stretti.")
                 return False
             
             # Estrai la prima canzone
@@ -352,7 +352,7 @@ st.markdown("<div class='subtitle'>Artificial Music Agent</div>", unsafe_allow_h
 st.sidebar.header("CONTROL ROOM")
 if st.session_state.get('oracle') and st.session_state.oracle.loss_history:
     n_trained = len(st.session_state.oracle.loss_history)
-    st.sidebar.success(f"🧠 Oracle: {n_trained} interazioni")
+    st.sidebar.success(f"Oracle: {n_trained} interazioni")
     
     # Mostra andamento Loss (deve scendere!)
     if n_trained > 1:
@@ -360,89 +360,38 @@ if st.session_state.get('oracle') and st.session_state.oracle.loss_history:
         last_loss = st.session_state.oracle.loss_history[-1]
         improvement = ((first_loss - last_loss) / first_loss) * 100
         
-        st.sidebar.caption(f"📉 Loss iniziale: {first_loss:.4f}")
-        st.sidebar.caption(f"📉 Loss attuale: {last_loss:.4f}")
+        st.sidebar.caption(f"Loss iniziale: {first_loss:.4f}")
+        st.sidebar.caption(f"Loss attuale: {last_loss:.4f}")
         
         if improvement > 0:
-            st.sidebar.caption(f"✅ Miglioramento: {improvement:.1f}%")
+            st.sidebar.caption(f"Miglioramento: {improvement:.1f}%")
         else:
-            st.sidebar.caption(f"⚠️ Loss in crescita (normale all'inizio)")
+            st.sidebar.caption(f"Loss in crescita (normale all'inizio)")
 st.sidebar.caption(f"Genre: {st.session_state.get('top_genre', '-')} | Artist: {st.session_state.get('top_artist', '-')}")
 
 # --- INDICATORE CODA ---
 q_len = len(st.session_state.recs_queue) if 'recs_queue' in st.session_state else 0
 if q_len > 0:
-    st.sidebar.success(f"⚡ Coda Veloce Attiva: {q_len} brani pronti")
+    st.sidebar.success(f"Coda Veloce Attiva: {q_len} brani pronti")
 else:
-    st.sidebar.info("⏳ Coda vuota (Il prossimo click calcolerà un nuovo batch)")
+    st.sidebar.info("Coda vuota (Il prossimo click calcolerà un nuovo batch)")
 
 st.sidebar.markdown("---")
 
-if st.session_state.get('current_context') is not None:
-    with st.sidebar.form("dna_equalizer"):
-        st.markdown("### 🧬 DNA Equalizer")
-        
-        ctx = st.session_state.current_context
-        start_vals = ctx
-        if scaler:
-            try: start_vals = scaler.inverse_transform(ctx.reshape(1, -1))[0]
-            except: pass
-
-        st.markdown("**VIBE**")
-        n_en = st.slider("Energy", 0, 100, int(np.clip(ctx[0], 0, 1) * 100))
-        n_val = st.slider("Valence (Mood)", 0, 100, int(np.clip(ctx[1], 0, 1) * 100))
-        n_dan = st.slider("Danceability", 0, 100, int(np.clip(ctx[2], 0, 1) * 100))
-        
-        st.markdown("**SOUND**")
-        def_tem = float(np.clip(start_vals[3], 40, 200)) if scaler else float(np.clip(ctx[3], 40, 200))
-        def_lou = float(np.clip(start_vals[4], -60, 0)) if scaler else float(np.clip(ctx[4], -60, 0))
-        n_tem = st.slider("Tempo (BPM)", 40.0, 200.0, def_tem) 
-        n_lou = st.slider("Loudness (dB)", -60.0, 0.0, def_lou)
-        
-        st.markdown("**TEXTURE**")
-        n_spe = st.slider("Speechiness", 0.0, 1.0, float(np.clip(ctx[5], 0, 1)))
-        n_aco = st.slider("Acousticness", 0, 100, int(np.clip(ctx[6], 0, 1) * 100))
-        n_ins = st.slider("Instrumentalness", 0, 100, int(np.clip(ctx[7], 0, 1) * 100))
-        n_liv = st.slider("Liveness", 0, 100, int(np.clip(ctx[8], 0, 1) * 100))
-        
-        submitted = st.form_submit_button("APPLICA & RIGENERA")
-        
-        if submitted:
-            raw_target = [
-                n_en / 100.0, n_val / 100.0, n_dan / 100.0,
-                n_tem, n_lou, n_spe,
-                n_aco / 100.0, n_ins / 100.0, n_liv / 100.0
-            ]
-            final_target_norm = raw_target
-            if scaler:
-                try: final_target_norm = scaler.transform([raw_target])[0]
-                except: pass
-
-            st.session_state.current_context = final_target_norm
-            cols = st.session_state.recommender.audio_cols
-            manual_dict = dict(zip(cols, final_target_norm))
-            
-            with st.spinner("Modulazione frequenze AI in corso (Ricalcolo Batch)..."):
-                # Passiamo il target manuale -> questo resetterà la coda!
-                if generate_new_recommendation(manual_target=manual_dict):
-                    time.sleep(0.2)
-                    st.rerun()
-else:
-    st.sidebar.warning("Inizializza la history per attivare l'equalizzatore.")
-    if st.sidebar.button("🔄 Aggiorna Cronologia"):
-        with st.spinner("Scaricamento dati..."):
-            try:
-                fetch_history()
-                if 'history_df' in st.session_state: del st.session_state['history_df']
-                load_data.clear()
-                st.rerun()
-            except Exception as e:
-                st.sidebar.error(f"Errore: {e}")
+if st.sidebar.button("Aggiorna Cronologia"):
+    with st.spinner("Scaricamento dati..."):
+        try:
+            fetch_history()
+            if 'history_df' in st.session_state: del st.session_state['history_df']
+            load_data.clear()
+            st.rerun()
+        except Exception as e:
+            st.sidebar.error(f"Errore: {e}")
 
 # --- GENERAZIONE ---
 c1, col_gen, c3 = st.columns([1, 2, 1])
 with col_gen:
-    btn_label = "GENERA PROSSIMA (⚡ Instant)" if q_len > 0 else "AVVIA SESSIONE (🐢 Load)"
+    btn_label = "GENERA PROSSIMA (Instant)" if q_len > 0 else "AVVIA SESSIONE (Load)"
     
     if st.button(btn_label, type="primary", key="main_gen"):
         if q_len == 0:
@@ -503,9 +452,9 @@ if st.session_state.suggestion_made and st.session_state.current_track:
     # --- BOTTONI (Like, Dislike, Save) ---
     c_dislike, c_like, c_save = st.columns([1, 1, 2])
     
-    # 👎 DISLIKE (Scende Vibe, Blacklist Sessione, Next)
+    #  DISLIKE (Scende Vibe, Blacklist Sessione, Next)
     with c_dislike:
-        if st.button("👎 DISLIKE", key="btn_dislike"):
+        if st.button("DISLIKE", key="btn_dislike"):
             update_vibe(-10) # Scende Vibe
 
             # Salva su CSV dedicato (DISLIKED)
@@ -519,9 +468,9 @@ if st.session_state.suggestion_made and st.session_state.current_track:
             generate_new_recommendation()
             st.rerun()
 
-    # 👍 LIKE (Sale Vibe, Allena AI, Blacklist Sessione, Next)
+    # LIKE (Sale Vibe, Allena AI, Blacklist Sessione, Next)
     with c_like:
-        if st.button("👍 LIKE", key="btn_like"):
+        if st.button("LIKE", key="btn_like"):
             update_vibe(+10) # Sale Vibe
 
             # Salva su CSV dedicato (LIKED) - NON in user_history.csv
@@ -534,7 +483,7 @@ if st.session_state.suggestion_made and st.session_state.current_track:
             if st.session_state.oracle:
 
                 print("\n" + "="*60)
-                print(f"🎵 LIKE - {track['name']} by {track['artist']}")
+                print(f"LIKE - {track['name']} by {track['artist']}")
                 print("="*60)
 
                 #predizione priam del training
@@ -574,7 +523,7 @@ if st.session_state.suggestion_made and st.session_state.current_track:
                 # Andamento Loss
                 if loss_count_after > 1:
                     loss_trend = st.session_state.oracle.loss_history[-5:]  # Ultimi 5
-                    print(f"\n📉 Loss trend (ultimi 5):")
+                    print(f"\n Loss trend (ultimi 5):")
                     for idx, loss in enumerate(loss_trend, start=1):
                         print(f"   {idx}. {loss:.6f}")
             
@@ -596,9 +545,9 @@ if st.session_state.suggestion_made and st.session_state.current_track:
             generate_new_recommendation() 
             st.rerun()
 
-    # 💾 SAVE (Sale Vibe Molto, Allena AI, Salva File, Next)
+    #  SAVE (Sale Vibe Molto, Allena AI, Salva File, Next)
     with c_save:
-        if st.button("💾 SALVA IN LIBRARY", key="btn_save"):
+        if st.button("SALVA IN LIBRARY", key="btn_save"):
             with st.status("Salvataggio...", expanded=False) as status:
                 update_vibe(+20) # Vibe sale molto
                 
@@ -609,19 +558,19 @@ if st.session_state.suggestion_made and st.session_state.current_track:
                 if st.session_state.oracle:
 
                     print("\n" + "="*60)
-                    print(f"💾 SAVE - {track['name']} by {track['artist']}")
+                    print(f"SAVE - {track['name']} by {track['artist']}")
                     print("="*60)   
 
                     loss_count_before = len(st.session_state.oracle.loss_history)
-                    print(f"📊 Training iterations prima: {loss_count_before}")
+                    print(f"Training iterations prima: {loss_count_before}")
 
 
                     st.session_state.oracle.train_incremental(st.session_state.current_context, feats)
 
                     loss_count_after = len(st.session_state.oracle.loss_history)
                     current_loss = st.session_state.oracle.loss_history[-1]
-                    print(f"📊 Training iterations dopo: {loss_count_after}")
-                    print(f"📊 Current loss: {current_loss:.6f}")
+                    print(f"Training iterations dopo: {loss_count_after}")
+                    print(f"Current loss: {current_loss:.6f}")
                     print("="*60 + "\n")
 
                     #salvataggio oracle su disco
@@ -682,4 +631,4 @@ with col_radar:
         fig = px.line_polar(df_r, r='r', theta='theta', line_close=True, range_r=[0, 1])
         fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', polar=dict(bgcolor='rgba(0,0,0,0)', radialaxis=dict(visible=False), angularaxis=dict(color='#888')), showlegend=False, height=250, margin=dict(l=40, r=40, t=20, b=20))
         fig.update_traces(line_color='#1DB954', fill='toself', fillcolor='rgba(29, 185, 84, 0.15)', mode='lines+markers', marker=dict(size=6))
-        st.plotly_chart(fig, width='stretch', config={'displayModeBar': False})
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
