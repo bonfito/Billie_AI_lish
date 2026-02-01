@@ -2,18 +2,27 @@ import pandas as pd
 import os 
 import joblib
 import numpy as np
+import sys
+
+
+
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+if CURRENT_DIR not in sys.path:
+    sys.path.insert(0, CURRENT_DIR)
+
 
 #import delle altre classi della repo
-from src.oracle import MusicOracle
-from src.utils import calculate_avalanche_context
+from oracle import MusicOracle
+from utils import calculate_avalanche_context
 
 def train_loop():
     print("Avvio addestramento....")
     print("-" * 20)
 
     #definisco i percorsi
-    history_path = os.path.join("data", "user_history.csv")
-    oracle_path = os.path.join("data", "oracle.pkl")
+    DATA_DIR = os.path.normpath(os.path.join(CURRENT_DIR, '..', 'data'))
+    history_path = os.path.join(DATA_DIR, "user_history.csv")
+    oracle_path = os.path.join(DATA_DIR, "oracle.pkl")
 
     #carico i dati
     if not os.path.exists(history_path):
