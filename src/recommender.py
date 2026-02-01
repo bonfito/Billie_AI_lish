@@ -32,8 +32,8 @@ class SongRecommender:
         self.oracle_path = os.path.join(data_dir, 'oracle.pkl')
         
         # Feedback persistente
-        self.likes_path = os.path.join(data_dir, 'likes.csv')
-        self.dislikes_path = os.path.join(data_dir, 'dislikes.csv')
+        self.likes_path = os.path.join(data_dir, 'liked.csv')
+        self.dislikes_path = os.path.join(data_dir, 'disliked.csv')
         
         self.audio_cols = ['energy', 'valence', 'danceability', 'tempo', 'loudness', 
                            'speechiness', 'acousticness', 'instrumentalness', 'liveness']
