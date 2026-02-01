@@ -631,4 +631,4 @@ with col_radar:
         fig = px.line_polar(df_r, r='r', theta='theta', line_close=True, range_r=[0, 1])
         fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', polar=dict(bgcolor='rgba(0,0,0,0)', radialaxis=dict(visible=False), angularaxis=dict(color='#888')), showlegend=False, height=250, margin=dict(l=40, r=40, t=20, b=20))
         fig.update_traces(line_color='#1DB954', fill='toself', fillcolor='rgba(29, 185, 84, 0.15)', mode='lines+markers', marker=dict(size=6))
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        st.plotly_chart(fig, width='stretch', config={'displayModeBar': False})
