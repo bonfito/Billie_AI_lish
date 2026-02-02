@@ -516,21 +516,17 @@ if st.session_state.suggestion_made and st.session_state.current_track:
     # --- BOTTONI (Like, Dislike, Save) ---
     c_dislike, c_like, c_save = st.columns([1, 1, 2])
     
-    #  DISLIKE (Scende Vibe, Blacklist Sessione, Next)
     with c_dislike:
         if st.button("DISLIKE", key="btn_dislike"):
             update_vibe(-10) # Scende Vibe
 
-            # Salva su CSV dedicato (DISLIKED)
             real_g, real_p = get_track_details(track['id'])
             append_feedback_csv(DISLIKED_PATH, track, real_g, real_p)
 
             st.session_state.session_blacklist.append(track['id'])
             st.session_state.past_track_ids.append(str(track['id']))
             
-            # RESET CODA: L'utente ha odiato, quindi ricalcoliamo subito per evitare brani simili
-            st.session_state.recs_queue = pd.DataFrame() 
-            
+            # NOTA: Non azzeriamo la coda qui, proseguiamo con la prossima
             generate_new_recommendation()
             st.rerun()
 
@@ -560,9 +556,7 @@ if st.session_state.suggestion_made and st.session_state.current_track:
             st.session_state.session_blacklist.append(track['id'])
             st.session_state.past_track_ids.append(str(track['id']))
             
-            # RESET CODA: Per rinfrescare con il nuovo training
-            st.session_state.recs_queue = pd.DataFrame()
-            
+            # NOTA: Non azzeriamo la coda qui, proseguiamo con la prossima
             generate_new_recommendation() 
             st.rerun()
 
@@ -601,9 +595,7 @@ if st.session_state.suggestion_made and st.session_state.current_track:
                 # 2. AGGIORNA MEMORIA SESSIONE (RAM) - NON SU DISCO
                 st.session_state.history_df = pd.concat([st.session_state.history_df, df_new], ignore_index=True)
 
-                # 3. RESET CODA
-                st.session_state.recs_queue = pd.DataFrame()
-
+                # NOTA: Non azzeriamo la coda qui, proseguiamo con la prossima
                 generate_new_recommendation()
                 status.update(label="Salvato!", state="complete")
             st.rerun()
