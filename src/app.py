@@ -307,17 +307,7 @@ def load_data(history_path: str) -> pd.DataFrame:
         return pd.read_csv(history_path)
     return pd.DataFrame()
 
-# --- AUTO-FETCH HISTORY ALL'AVVIO ---
-if 'history_fetched' not in st.session_state:
-    try:
-        fetch_history()
-    except Exception:
-        pass
-    st.session_state.history_fetched = True
-    try:
-        load_data.clear()
-    except Exception:
-        pass
+# NOTE: Rimossa sezione AUTO-FETCH per migliorare UX
 
 if 'history_df' not in st.session_state:
     try:
@@ -443,13 +433,58 @@ if st.sidebar.button("Aggiorna Cronologia"):
 # --- GENERAZIONE ---
 c1, col_gen, c3 = st.columns([1, 2, 1])
 with col_gen:
-    btn_label = "GENERA PROSSIMA " if q_len > 0 else "AVVIA SESSIONE"
+    
+    # Se la coda è vuota, siamo all'inizio sessione
+    is_start_session = (q_len == 0)
+    btn_label = "AVVIA SESSIONE" if is_start_session else "GENERA PROSSIMA"
     
     if st.button(btn_label, type="primary", key="main_gen"):
-        if q_len == 0:
-            with st.spinner("L'AI sta scansionando il database..."):
+        
+        # 1. LOGICA DI AVVIO SESSIONE (Fetch + Prima Generazione)
+        if is_start_session:
+            with st.status("Avvio Sessione...", expanded=True) as status:
+                
+                # A. Scaricamento Dati (Solo se non fatto di recente o forzato)
+                status.write("📡 Connessione a Spotify...")
+                try:
+                    fetch_history()
+                    # Invalidiamo la cache per ricaricare i dati freschi
+                    load_data.clear() 
+                    if 'history_df' in st.session_state: 
+                        del st.session_state['history_df']
+                except Exception as e:
+                    st.error(f"Errore connessione: {e}")
+                    status.update(label="Errore!", state="error")
+                    st.stop()
+                
+                status.write("🧠 Analisi DNA Musicale...")
+                # Forziamo il ricaricamento dei dati nello stato
+                # (Questo codice è duplicato dalla sezione di init ma serve qui per refresh immediato)
+                history_df = load_data(HISTORY_PATH)
+                if history_df is not None and not history_df.empty:
+                    # Normalizzazione colonne al volo
+                    history_df.columns = history_df.columns.astype(str).str.lower().str.strip()
+                    rename_map = {'artists': 'artist', 'artist_name': 'artist', 'genre': 'genres', 'track_name': 'name', 'song': 'name', 'track': 'name'}
+                    history_df.rename(columns=rename_map, inplace=True)
+                    if 'artist' not in history_df.columns: history_df['artist'] = "Unknown"
+                    if 'genres' not in history_df.columns: history_df['genres'] = "[]"
+                    st.session_state.history_df = history_df
+                    
+                    # Ricalcolo contesto
+                    features = st.session_state.recommender.audio_cols
+                    valid = [c for c in features if c in history_df.columns]
+                    if valid:
+                        st.session_state.current_context = history_df[valid].mean().values
+                
+                status.write("🎵 Generazione Raccomandazioni...")
                 if generate_new_recommendation():
+                    status.update(label="Pronto!", state="complete")
+                    time.sleep(0.5) # Breve pausa per far vedere il completamento
                     st.rerun()
+                else:
+                    status.update(label="Nessun risultato trovato", state="error")
+
+        # 2. LOGICA DI GENERAZIONE SUCCESSIVA (Solo Next)
         else:
             generate_new_recommendation()
             st.rerun()
