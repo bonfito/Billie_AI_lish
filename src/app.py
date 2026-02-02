@@ -30,7 +30,15 @@ SCALER_PATH = os.path.join(DATA_DIR, 'scaler.save')
 ORACLE_PATH = os.path.join(DATA_DIR, 'oracle.pkl')
 
 # Carica variabili ambiente
+
 load_dotenv()
+
+# --- CACHED RECOMMENDER FACTORY ---
+
+@st.cache_resource(show_spinner=False)
+def get_recommender():
+    """Istanzia il recommender una sola volta (Streamlit rerun-safe)."""
+    return SongRecommender()
 
 # --- CARICAMENTO SCALER ---
 SCALER_FEATURES = None
@@ -198,7 +206,7 @@ if 'oracle' not in st.session_state:
 
 
         try:
-            st.session_state.recommender = SongRecommender()
+            st.session_state.recommender = get_recommender()
         except Exception as e:
             st.error(f"System Error: {e}")
             st.stop()
