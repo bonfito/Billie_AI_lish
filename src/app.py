@@ -30,11 +30,9 @@ SCALER_PATH = os.path.join(DATA_DIR, 'scaler.save')
 ORACLE_PATH = os.path.join(DATA_DIR, 'oracle.pkl')
 
 # Carica variabili ambiente
-
 load_dotenv()
 
 # --- CACHED RECOMMENDER FACTORY ---
-
 @st.cache_resource(show_spinner=False)
 def get_recommender():
     """Istanzia il recommender una sola volta (Streamlit rerun-safe)."""
@@ -56,7 +54,7 @@ except Exception:
 st.set_page_config(
     page_title="Billie AI-lish", 
     layout="centered", 
-    page_icon=None,
+    page_icon="🎵",
     initial_sidebar_state="expanded"
 )
 
@@ -96,6 +94,7 @@ st.markdown("""
     .track-name { font-size: 3rem; font-weight: 800; margin-top: 1.5rem; line-height: 1.1; color: #fff; }
     .artist-name { font-size: 1.6rem; font-weight: 400; color: #1DB954; margin-bottom: 0.5rem; }
     .meta-tag { font-size: 0.9rem; color: #555; letter-spacing: 2px; margin-bottom: 2rem; text-transform: uppercase; }
+    .debug-tag { font-size: 0.7rem; color: #666; font-family: monospace; margin-top: -10px; margin-bottom: 20px;}
 
     /* 3. Spotify Player */
     .spotify-container {
@@ -219,16 +218,15 @@ if 'oracle' not in st.session_state:
     st.session_state.recs_queue = pd.DataFrame()
     st.session_state.vibe_history = [50] # Parte da 50 (Neutro)
     
-    # --- NUOVO: BLACKLIST TEMPORANEA (SESSIONE BROWSER) ---
-    # Qui finiscono le canzoni che metti Like/Dislike per non rivederle subito
+    # --- BLACKLIST TEMPORANEA (SESSIONE BROWSER) ---
     st.session_state.session_blacklist = []
 
 # --- FUNZIONE GENERAZIONE (BUFFERIZZATA + FILTRO BLACKLIST) ---
 def generate_new_recommendation(manual_target=None):
     if st.session_state.history_df is not None:
         try:
-            # 1. Se c'è un target manuale (Slider), ricalcoliamo tutto e resettiamo la coda
-            if manual_target is not None:
+            # 1. Se c'è un target manuale (Slider) o la coda è vuota, ricalcoliamo tutto
+            if manual_target is not None or st.session_state.recs_queue.empty:
                 st.session_state.recs_queue = pd.DataFrame() # Reset coda
                 recs_df, pred_vector = st.session_state.recommender.recommend(
                     st.session_state.history_df, 
@@ -237,17 +235,7 @@ def generate_new_recommendation(manual_target=None):
                     # Passiamo la blacklist della sessione al Recommender
                     session_blacklist=st.session_state.session_blacklist 
                 )
-            
-            # 2. Se la coda è vuota, calcoliamo un nuovo batch
-            elif st.session_state.recs_queue.empty:
-                recs_df, pred_vector = st.session_state.recommender.recommend(
-                    st.session_state.history_df, 
-                    k=30,
-                    # Passiamo la blacklist della sessione al Recommender
-                    session_blacklist=st.session_state.session_blacklist
-                )
-            
-            # 3. Se la coda ha canzoni, usiamo quelle (ISTANTANEO)
+            # 2. Se la coda ha canzoni, usiamo quelle (ISTANTANEO)
             else:
                 recs_df = st.session_state.recs_queue
                 # Manteniamo il vettore target precedente
@@ -295,6 +283,7 @@ def append_feedback_csv(csv_path, track_dict, real_g=None, real_p=None):
             **{k: track_dict.get(k, 0) for k in cols}
         }
         df_new = pd.DataFrame([row])
+        # Se il file non esiste, scrivi header. Se esiste, appendi senza header.
         df_new.to_csv(csv_path, mode='a', header=not os.path.exists(csv_path), index=False)
     except Exception as e:
         st.warning(f"Impossibile salvare feedback su {os.path.basename(csv_path)}: {e}")
@@ -318,15 +307,13 @@ def load_data(history_path: str) -> pd.DataFrame:
         return pd.read_csv(history_path)
     return pd.DataFrame()
 
-# --- AUTO-FETCH HISTORY ALL'AVVIO (UNA VOLTA PER SESSIONE) ---
+# --- AUTO-FETCH HISTORY ALL'AVVIO ---
 if 'history_fetched' not in st.session_state:
     try:
         fetch_history()
     except Exception:
-        # Non blocchiamo l'app se il fetch fallisce
         pass
     st.session_state.history_fetched = True
-    # Se il fetch ha scritto un nuovo CSV, resettiamo la cache
     try:
         load_data.clear()
     except Exception:
@@ -335,23 +322,69 @@ if 'history_fetched' not in st.session_state:
 if 'history_df' not in st.session_state:
     try:
         history_df = load_data(HISTORY_PATH)
+        
+        # Se il file esiste ed è stato caricato
         if history_df is not None and not history_df.empty:
+            
+            # --- FIX CRUCIALE: NORMALIZZAZIONE COLONNE ---
+            # 1. Tutto minuscolo e senza spazi
+            history_df.columns = history_df.columns.astype(str).str.lower().str.strip()
+            
+            # 2. Rinomina colonne problematiche (artists -> artist, genre -> genres)
+            rename_map = {
+                'artists': 'artist', 
+                'artist_name': 'artist',
+                'genre': 'genres', 
+                'track_name': 'name', 
+                'song': 'name',
+                'track': 'name'
+            }
+            history_df.rename(columns=rename_map, inplace=True)
+            
+            # 3. Verifica esistenza 'artist' (Evita il KeyError)
+            if 'artist' not in history_df.columns:
+                # Se manca ancora, crea colonna dummy per non crashare
+                history_df['artist'] = "Unknown"
+            
+            # 4. Verifica esistenza 'genres'
+            if 'genres' not in history_df.columns:
+                history_df['genres'] = "[]"
+
+            # Ora è sicuro assegnarlo allo stato
             st.session_state.history_df = history_df
+            
+            # --- Calcolo Contesto e Statistiche ---
             features = st.session_state.recommender.audio_cols
             valid = [c for c in features if c in history_df.columns]
+            
             if valid:
                 st.session_state.current_context = history_df[valid].mean().values
                 st.session_state.song_count = len(history_df)
-
-                genre_col = 'genres' if 'genres' in history_df.columns else 'genre'
-                if genre_col in history_df.columns:
-                    v_gen = history_df[~history_df[genre_col].isin(['unknown', 'nan'])][genre_col]
-                    st.session_state.top_genre = v_gen.mode()[0].title() if not v_gen.empty else "N/A"
-                v_art = history_df[~history_df['artist'].isin(['unknown', 'nan'])]['artist']
+                
+                # Calcolo Top Genre (sicuro perché la colonna esiste per forza ora)
+                v_gen = history_df[~history_df['genres'].isin(['unknown', 'nan', '[]'])]['genres']
+                st.session_state.top_genre = v_gen.mode()[0].title() if not v_gen.empty else "N/A"
+                
+                # Calcolo Top Artist (sicuro perché la colonna esiste per forza ora)
+                v_art = history_df[~history_df['artist'].isin(['unknown', 'nan', 'Unknown'])]['artist']
                 st.session_state.top_artist = v_art.mode()[0] if not v_art.empty else "N/A"
+            else:
+                # Dati anagrafici ok, ma audio mancante
+                st.session_state.current_context = np.array([0.5] * 9)
+                st.session_state.song_count = len(history_df)
+                st.session_state.top_artist = "N/A"
+                st.session_state.top_genre = "N/A"
+
         else:
-            raise FileNotFoundError()
+            # File vuoto o inesistente: inizializza vuoto
+            st.session_state.history_df = pd.DataFrame()
+            st.session_state.current_context = np.array([0.5] * 9)
+            st.session_state.song_count = 0
+            st.session_state.top_artist = "-"
+            st.session_state.top_genre = "-"
+
     except Exception:
+        # Fallback totale per evitare crash
         st.session_state.history_df = None
         st.session_state.current_context = np.array([0.5] * 9)
         st.session_state.song_count = 0
@@ -368,15 +401,12 @@ if st.session_state.get('oracle') and st.session_state.oracle.loss_history:
     n_trained = len(st.session_state.oracle.loss_history)
     st.sidebar.success(f"Oracle: {n_trained} interazioni")
     
-    # Mostra andamento Loss (deve scendere!)
     if n_trained > 1:
         first_loss = st.session_state.oracle.loss_history[0]
         last_loss = st.session_state.oracle.loss_history[-1]
         improvement = ((first_loss - last_loss) / first_loss) * 100
-        
         st.sidebar.caption(f"Loss iniziale: {first_loss:.4f}")
         st.sidebar.caption(f"Loss attuale: {last_loss:.4f}")
-        
         if improvement > 0:
             st.sidebar.caption(f"Miglioramento: {improvement:.1f}%")
         else:
@@ -389,6 +419,14 @@ if q_len > 0:
     st.sidebar.success(f"Coda Veloce Attiva: {q_len} brani pronti")
 else:
     st.sidebar.info("Coda vuota (Il prossimo click calcolerà un nuovo batch)")
+
+# --- TASTO RESET ---
+if st.sidebar.button(" RESETTA CERVELLO AI", type="primary"):
+    st.session_state.recs_queue = pd.DataFrame()
+    st.session_state.session_blacklist = []
+    # Rimuove cache dati
+    st.cache_data.clear()
+    st.rerun()
 
 st.sidebar.markdown("---")
 
@@ -405,7 +443,7 @@ if st.sidebar.button("Aggiorna Cronologia"):
 # --- GENERAZIONE ---
 c1, col_gen, c3 = st.columns([1, 2, 1])
 with col_gen:
-    btn_label = "GENERA PROSSIMA (Instant)" if q_len > 0 else "AVVIA SESSIONE (Load)"
+    btn_label = "GENERA PROSSIMA " if q_len > 0 else "AVVIA SESSIONE"
     
     if st.button(btn_label, type="primary", key="main_gen"):
         if q_len == 0:
@@ -464,11 +502,16 @@ if st.session_state.suggestion_made and st.session_state.current_track:
 
     st.markdown(f"<div class='track-name'>{track['name']}</div>", unsafe_allow_html=True)
     st.markdown(f"<div class='artist-name'>{track['artist']}</div>", unsafe_allow_html=True)
-    g = str(track.get('genres', 'unknown')).title()
-    year_raw = track.get('year', None)
-    year_num = pd.to_numeric(year_raw, errors='coerce')
-    y_str = str(int(year_num)) if pd.notna(year_num) else "-"
-    st.markdown(f"<div class='meta-tag'>{y_str} • {g}</div>", unsafe_allow_html=True)
+    g_str = str(track.get('genres', '')).replace("['", "").replace("']", "").replace("'", "").title()
+    if g_str == "[]" or g_str == "Unknown": g_str = "Genere non classificato"
+    
+    y = str(int(float(track.get('year', 0)))) if track.get('year') else ""
+    st.markdown(f"<div class='meta-tag'>{y} • {g_str}</div>", unsafe_allow_html=True)
+    
+    # DEBUG TAG VISIBILE A SCHERMO
+    reason = track.get('reason_text', 'Algoritmo')
+    match_score = track.get('match_percentage', 0)
+    st.markdown(f"<div class='debug-tag'>[DEBUG AI] Motivo: {reason} | Match Audio: {match_score}%</div>", unsafe_allow_html=True)
 
     # --- BOTTONI (Like, Dislike, Save) ---
     c_dislike, c_like, c_save = st.columns([1, 1, 2])
@@ -482,10 +525,12 @@ if st.session_state.suggestion_made and st.session_state.current_track:
             real_g, real_p = get_track_details(track['id'])
             append_feedback_csv(DISLIKED_PATH, track, real_g, real_p)
 
-            # Anche se non piace, non vogliamo rivederla subito nella stessa sessione
             st.session_state.session_blacklist.append(track['id'])
-
             st.session_state.past_track_ids.append(str(track['id']))
+            
+            # RESET CODA: L'utente ha odiato, quindi ricalcoliamo subito per evitare brani simili
+            st.session_state.recs_queue = pd.DataFrame() 
+            
             generate_new_recommendation()
             st.rerun()
 
@@ -494,7 +539,6 @@ if st.session_state.suggestion_made and st.session_state.current_track:
         if st.button("LIKE", key="btn_like"):
             update_vibe(+10) # Sale Vibe
 
-            # Salva su CSV dedicato (LIKED) - NON in user_history.csv
             real_g, real_p = get_track_details(track['id'])
             append_feedback_csv(LIKED_PATH, track, real_g, real_p)
 
@@ -502,67 +546,23 @@ if st.session_state.suggestion_made and st.session_state.current_track:
             cols = st.session_state.recommender.audio_cols
             feats = np.array([track[k] for k in cols])
             if st.session_state.oracle:
-
                 print("\n" + "="*60)
                 print(f"LIKE - {track['name']} by {track['artist']}")
                 print("="*60)
-
-                #predizione priam del training
-                prediction_before = st.session_state.oracle.predict_target(st.session_state.current_context)
-                loss_count_before = len(st.session_state.oracle.loss_history)
-
-                print(f"Stato PRIMA DEL TRAINING:")
-                print(f"   • Training iterations: {loss_count_before}")
-
-                if loss_count_before > 0:
-                    print(f"   • Last loss: {st.session_state.oracle.loss_history[-1]:.6f}")
-
-                #TRAINING
                 st.session_state.oracle.train_incremental(st.session_state.current_context, feats)
-
-                loss_count_after = len(st.session_state.oracle.loss_history)
-                current_loss = st.session_state.oracle.loss_history[-1]
-
-                print(f"Stato dopo il training: ")
-                print(f"   • Training iterations: {loss_count_after}")
-                print(f"   • Current loss: {current_loss:.6f}")
-
-                # Confronto predizione
-                prediction_after = st.session_state.oracle.predict_target(st.session_state.current_context)
-                diff = np.abs(prediction_after - prediction_before).mean()
-                print(f"   • Cambio medio predizione: {diff:.6f}")
-            
-                # Confronto con target reale
-                error = np.abs(feats - prediction_after).mean()
-                print(f"   • Errore medio vs target: {error:.6f}")
-            
-                print("\n Predizione vs Realtà (prime 5 features):")
-                feature_names = ['Energy', 'Valence', 'Dance', 'Tempo', 'Loud']
-                for i, name in enumerate(feature_names):
-                    print(f"   • {name:12}: Pred={prediction_after[i]:.3f} | Real={feats[i]:.3f} | Diff={abs(prediction_after[i]-feats[i]):.3f}")
-            
-                # Andamento Loss
-                if loss_count_after > 1:
-                    loss_trend = st.session_state.oracle.loss_history[-5:]  # Ultimi 5
-                    print(f"\n Loss trend (ultimi 5):")
-                    for idx, loss in enumerate(loss_trend, start=1):
-                        print(f"   {idx}. {loss:.6f}")
-            
-                print("="*60 + "\n")
-
-                #SALVATAGGIO
                 try:
                     joblib.dump(st.session_state.oracle, ORACLE_PATH)
-                except Exception as e:
-                    st.warning(f"Oracle non salvato: {e}")
+                except Exception: pass
 
             # 2. Aggiorna Contesto
             st.session_state.current_context = calculate_avalanche_context(st.session_state.current_context, feats, st.session_state.song_count)
 
-            # Anche se piace, non vogliamo risentirla subito nella stessa sessione
             st.session_state.session_blacklist.append(track['id'])
-
             st.session_state.past_track_ids.append(str(track['id']))
+            
+            # RESET CODA: Per rinfrescare con il nuovo training
+            st.session_state.recs_queue = pd.DataFrame()
+            
             generate_new_recommendation() 
             st.rerun()
 
@@ -577,44 +577,33 @@ if st.session_state.suggestion_made and st.session_state.current_track:
                 feats = np.array([track[k] for k in cols])
                 
                 if st.session_state.oracle:
-
                     print("\n" + "="*60)
                     print(f"SAVE - {track['name']} by {track['artist']}")
                     print("="*60)   
-
-                    loss_count_before = len(st.session_state.oracle.loss_history)
-                    print(f"Training iterations prima: {loss_count_before}")
-
-
                     st.session_state.oracle.train_incremental(st.session_state.current_context, feats)
-
-                    loss_count_after = len(st.session_state.oracle.loss_history)
-                    current_loss = st.session_state.oracle.loss_history[-1]
-                    print(f"Training iterations dopo: {loss_count_after}")
-                    print(f"Current loss: {current_loss:.6f}")
-                    print("="*60 + "\n")
-
-                    #salvataggio oracle su disco
                     try:
                         joblib.dump(st.session_state.oracle, ORACLE_PATH)
-                    except Exception as e:
-                        pass
+                    except Exception: pass
                 
                 st.session_state.song_count += 1
                 st.session_state.current_context = calculate_avalanche_context(st.session_state.current_context, feats, st.session_state.song_count)
                 
-                # `tid` può essere pd.NA/nan: evitare `if tid` (truth value ambiguo)
                 if pd.notna(tid):
                     add_track_to_playlist(str(tid))
                 
-                # --- MODIFICA RICHIESTA: AGGIUNGI A BLACKLIST SESSIONE ---
                 st.session_state.session_blacklist.append(track['id'])
                 
-                # Salva su CSV dedicato (playlist_saved.csv) e NON in user_history.csv
+                # 1. Salva SOLO su CSV Playlist (DISCO)
                 new_row = {'id': track['id'], 'name': track['name'], 'artist': track['artist'], 'genres': real_g, 'popularity': real_p, 'year': track.get('year'), **{k: track[k] for k in cols}}
                 df_new = pd.DataFrame([new_row])
                 df_new.to_csv(PLAYLIST_SAVED_PATH, mode='a', header=not os.path.exists(PLAYLIST_SAVED_PATH), index=False)
                 
+                # 2. AGGIORNA MEMORIA SESSIONE (RAM) - NON SU DISCO
+                st.session_state.history_df = pd.concat([st.session_state.history_df, df_new], ignore_index=True)
+
+                # 3. RESET CODA
+                st.session_state.recs_queue = pd.DataFrame()
+
                 generate_new_recommendation()
                 status.update(label="Salvato!", state="complete")
             st.rerun()
