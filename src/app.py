@@ -457,8 +457,10 @@ if st.session_state.suggestion_made and st.session_state.current_track:
     st.markdown(f"<div class='track-name'>{track['name']}</div>", unsafe_allow_html=True)
     st.markdown(f"<div class='artist-name'>{track['artist']}</div>", unsafe_allow_html=True)
     g = str(track.get('genres', 'unknown')).title()
-    y = int(track.get('year', 0))
-    st.markdown(f"<div class='meta-tag'>{y} • {g}</div>", unsafe_allow_html=True)
+    year_raw = track.get('year', None)
+    year_num = pd.to_numeric(year_raw, errors='coerce')
+    y_str = str(int(year_num)) if pd.notna(year_num) else "-"
+    st.markdown(f"<div class='meta-tag'>{y_str} • {g}</div>", unsafe_allow_html=True)
 
     # --- BOTTONI (Like, Dislike, Save) ---
     c_dislike, c_like, c_save = st.columns([1, 1, 2])
@@ -593,7 +595,9 @@ if st.session_state.suggestion_made and st.session_state.current_track:
                 st.session_state.song_count += 1
                 st.session_state.current_context = calculate_avalanche_context(st.session_state.current_context, feats, st.session_state.song_count)
                 
-                if tid: add_track_to_playlist(tid)
+                # `tid` può essere pd.NA/nan: evitare `if tid` (truth value ambiguo)
+                if pd.notna(tid):
+                    add_track_to_playlist(str(tid))
                 
                 # --- MODIFICA RICHIESTA: AGGIUNGI A BLACKLIST SESSIONE ---
                 st.session_state.session_blacklist.append(track['id'])
