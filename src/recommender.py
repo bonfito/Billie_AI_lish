@@ -81,22 +81,40 @@ class SongRecommender:
         return ctx
     
     def _extract_genres(self, genre_str):
-        if pd.isna(genre_str) or str(genre_str) == '[]': return set()
+        if pd.isna(genre_str):
+            return set()
+
+        s = str(genre_str).strip().lower()
+        if s in ('[]', '', 'unknown', 'nan', 'none'):
+            return set()
+
         raw_set = set()
         try:
-            if str(genre_str).strip().startswith('['):
+            # caso: stringa che rappresenta una lista ["rock", "pop"]
+            if s.startswith('['):
                 raw_list = ast.literal_eval(genre_str)
                 if isinstance(raw_list, list):
-                    for g in raw_list: raw_set.add(str(g).lower())
+                    for g in raw_list:
+                        for part in re.split(r'[,\|]', str(g)):
+                            part = part.strip().lower()
+                            if part and part not in {'unknown', 'nan', 'none'}:
+                                raw_set.add(part)
             else:
-                for g in str(genre_str).split(','):
-                    raw_set.add(g.strip().lower())
-        except: return set()
-        
+                # caso: stringa "rock, pop" oppure "rock|pop"
+                for part in re.split(r'[,\|]', str(genre_str)):
+                    part = part.strip().lower()
+                    if part and part not in {'unknown', 'nan', 'none'}:
+                        raw_set.add(part)
+        except Exception:
+            return set()
+
+        # espansione: "classic rock" -> {"classic rock", "classic", "rock"}
         expanded = set(raw_set)
         for g in raw_set:
             words = g.split()
-            if len(words) > 1: expanded.update(words)
+            if len(words) > 1:
+                expanded.update(words)
+
         return expanded
 
     def _load_feedback_data(self):
