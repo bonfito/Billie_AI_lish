@@ -32,6 +32,130 @@ ORACLE_PATH = os.path.join(DATA_DIR, 'oracle.pkl')
 # Carica variabili ambiente
 load_dotenv()
 
+# --- CONFIGURAZIONE PAGINA ---
+st.set_page_config(
+    page_title="Billie AI-lish", 
+    layout="centered", 
+    page_icon="🎵",
+    initial_sidebar_state="expanded"
+)
+
+# --- HELPER PER GENERARE L'HTML DELLO SPLASH SCREEN ---
+def get_splash_html(fade_out=False):
+    # URL DELLA TUA FOTO (Collage Vinili)
+    HERO_IMAGE_URL = "https://i.pinimg.com/1200x/e5/d0/bb/e5d0bb01bf836c60f236040cba62cb14.jpg"
+    
+    # Se fade_out è True, impostiamo opacità a 0 con transizione
+    container_style = ""
+    if fade_out:
+        # Questa classe sovrascriverà lo stile base per creare la dissolvenza
+        container_style = """
+            opacity: 0 !important;
+            pointer-events: none;
+            transition: opacity 1.5s ease-out;
+        """
+
+    return f"""
+    <style>
+        /* Font Spotify-like (Circular) - Solo per Splash */
+        @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;900&display=swap');
+
+        /* Copre interamente lo schermo */
+        .splash-container {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 99999;
+            background-color: #000;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            opacity: 1; /* Stato iniziale visibile */
+            {container_style}
+        }}
+
+        /* Sfondo Immagine Unica che "Respira" */
+        .splash-background {{
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            
+            background-image: url('{HERO_IMAGE_URL}');
+            background-position: center center;
+            background-repeat: no-repeat;
+            background-size: cover;
+            
+            opacity: 0.4; 
+            animation: kenburns 20s ease-in-out infinite alternate;
+        }}
+
+        @keyframes kenburns {{
+            0% {{ transform: scale(1); }}
+            100% {{ transform: scale(1.15); }}
+        }}
+
+        /* Testo BILLIE AI-LISH pulsante */
+        .splash-title {{
+            position: relative;
+            z-index: 2;
+            font-family: 'Montserrat', sans-serif;
+            font-size: 5rem;
+            font-weight: 900;
+            color: #fff;
+            text-transform: uppercase;
+            letter-spacing: -2px;
+            text-shadow: 0 4px 30px rgba(0,0,0,0.5);
+            animation: fadein 1.5s ease-out;
+        }}
+
+        .splash-subtitle {{
+            position: relative;
+            z-index: 2;
+            font-family: 'Montserrat', sans-serif;
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #1DB954;
+            letter-spacing: 2px;
+            margin-top: 15px;
+            text-transform: uppercase;
+            animation: blink 2s infinite;
+        }}
+
+        @keyframes fadein {{
+            0% {{ opacity: 0; transform: translateY(20px); }}
+            100% {{ opacity: 1; transform: translateY(0); }}
+        }}
+        
+        @keyframes blink {{
+            0% {{ opacity: 0.6; }}
+            50% {{ opacity: 1; }}
+            100% {{ opacity: 0.6; }}
+        }}
+    </style>
+
+    <div class="splash-container">
+        <div class="splash-background"></div>
+        <div class="splash-title">BILLIE AI-LISH</div>
+        <div class="splash-subtitle">INITIALIZING NEURAL AUDIO ENGINE...</div>
+    </div>
+    """
+
+# --- FUNZIONE PRINCIPALE SPLASH ---
+def render_splash_screen():
+    # Se è la prima volta che entriamo nella sessione
+    if 'first_load_done' not in st.session_state:
+        placeholder = st.empty()
+        # Renderizza stato iniziale (Visibile)
+        placeholder.markdown(get_splash_html(fade_out=False), unsafe_allow_html=True)
+        return placeholder
+    return None
+
 # --- CACHED RECOMMENDER FACTORY ---
 @st.cache_resource(show_spinner=False)
 def get_recommender():
@@ -50,15 +174,7 @@ try:
 except Exception:
     scaler = None
 
-# --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(
-    page_title="Billie AI-lish", 
-    layout="centered", 
-    page_icon="🎵",
-    initial_sidebar_state="expanded"
-)
-
-# --- CSS ---
+# --- CSS GENERALE (FONT STANDARD STREAMLIT) ---
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
@@ -67,7 +183,7 @@ st.markdown("""
         visibility: visible !important;
         background: transparent !important;
     }
-
+    
     /* 1. Layout Principale */
     .block-container {
         max-width: 900px !important; 
@@ -87,13 +203,39 @@ st.markdown("""
         justify-content: center;
     }
 
-    /* 2. Tipografia */
-    .main-title { font-size: 3.5rem; font-weight: 900; color: #FFFFFF; text-transform: uppercase; margin-bottom: 0; }
-    .subtitle { font-size: 1rem; letter-spacing: 5px; color: #1DB954; text-transform: uppercase; margin-bottom: 3rem; }
+    /* 2. Tipografia Main (Font Standard) */
+    .main-title { 
+        font-size: 3.5rem; 
+        font-weight: 900; 
+        color: #FFFFFF; 
+        text-transform: uppercase; 
+        margin-bottom: 0; 
+        letter-spacing: -1px;
+    }
+    .subtitle { 
+        font-size: 1rem; 
+        letter-spacing: 3px; 
+        color: #1DB954; 
+        text-transform: uppercase; 
+        margin-bottom: 3rem; 
+        font-weight: 700;
+    }
     
-    .track-name { font-size: 3rem; font-weight: 800; margin-top: 1.5rem; line-height: 1.1; color: #fff; }
-    .artist-name { font-size: 1.6rem; font-weight: 400; color: #1DB954; margin-bottom: 0.5rem; }
-    .meta-tag { font-size: 0.9rem; color: #555; letter-spacing: 2px; margin-bottom: 2rem; text-transform: uppercase; }
+    .track-name { 
+        font-size: 3rem; 
+        font-weight: 800; 
+        margin-top: 1.5rem; 
+        line-height: 1.1; 
+        color: #fff; 
+        letter-spacing: -1px;
+    }
+    .artist-name { 
+        font-size: 1.6rem; 
+        font-weight: 500; 
+        color: #1DB954; 
+        margin-bottom: 0.5rem; 
+    }
+    .meta-tag { font-size: 0.9rem; color: #888; letter-spacing: 1px; margin-bottom: 2rem; text-transform: uppercase; font-weight: 600;}
     .debug-tag { font-size: 0.7rem; color: #666; font-family: monospace; margin-top: -10px; margin-bottom: 20px;}
 
     /* 3. Spotify Player */
@@ -105,18 +247,18 @@ st.markdown("""
         margin: 0 auto;
     }
     iframe {
-        border-radius: 20px;
-        box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+        border-radius: 12px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.5);
     }
     
     /* 4. Lista Feature a Destra (Track DNA) */
     .feature-list {
         text-align: left;
-        background-color: #111;
-        padding: 15px;
+        background-color: #121212;
+        padding: 20px;
         margin-left:-200px;
-        border-radius: 15px;
-        border: 1px solid #333;
+        border-radius: 8px;
+        border: 1px solid #282828;
         height: 352px;
         display: flex;
         flex-direction: column;
@@ -126,13 +268,12 @@ st.markdown("""
         display: flex;
         justify-content: space-between;
         margin-bottom: 8px;
-        border-bottom: 1px solid #222;
-        padding-bottom: 2px;
-        font-family: 'Courier New', monospace;
+        border-bottom: 1px solid #282828;
+        padding-bottom: 4px;
         font-size: 0.85rem;
     }
-    .feat-label { color: #888; font-weight: bold; }
-    .feat-val { color: #1DB954; }
+    .feat-label { color: #b3b3b3; font-weight: 600; }
+    .feat-val { color: #1DB954; font-weight: 700;}
 
     /* 5. HISTORY TABLE */
     .history-container {
@@ -142,84 +283,118 @@ st.markdown("""
         overflow-y: auto; 
         margin: 20px auto; 
         padding: 0 15px;
-        border-top: 1px solid #333;
-        border-bottom: 1px solid #333;
+        border-top: 1px solid #282828;
+        border-bottom: 1px solid #282828;
         display: block;
     }
     
-    .history-container::-webkit-scrollbar { width: 6px; }
-    .history-container::-webkit-scrollbar-thumb { background: #1DB954; border-radius: 10px; }
+    .history-container::-webkit-scrollbar { width: 8px; }
+    .history-container::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
+    .history-container::-webkit-scrollbar-thumb:hover { background: #888; }
 
     .history-table { 
         width: 100%; 
         border-collapse: collapse; 
-        font-family: 'Courier New', monospace;
         margin: 0 auto;
     }
 
     .history-table td {
         padding: 12px 10px;
-        border-bottom: 1px solid #1a1a1a;
-        font-size: 0.85rem;
-        color: #888;
+        border-bottom: 1px solid #282828;
+        font-size: 0.9rem;
+        color: #b3b3b3;
         vertical-align: middle;
         text-align: left; 
     }
 
-    .track-number { width: 50px; color: #444; font-weight: bold; }
-    .track-title-cell { color: #eee; letter-spacing: -0.5px; }
-    .history-row-artist { color: #1DB954; font-weight: 600; opacity: 0.8; }
-    .history-table tr:hover td { background-color: #111; color: #fff; }
+    .track-number { width: 40px; color: #1DB954; font-weight: bold; }
+    .track-title-cell { color: #fff; font-weight: 500; letter-spacing: 0.5px; }
+    .history-row-artist { color: #b3b3b3; font-weight: 400; font-size: 0.85rem; margin-left: 5px;}
+    .history-table tr:hover td { background-color: #282828; }
 
     /* 6. Bottoni Main */
     section[data-testid="stMain"] .stButton > button {
         width: 100% !important;
-        border-radius: 50px;
-        border: 2px solid #333;
-        background: transparent;
-        color: white;
-        font-weight: bold;
-        padding: 0.6rem;
-        transition: 0.3s;
+        border-radius: 500px; /* Spotify pill shape */
+        border: none;
+        background-color: transparent;
+        color: #fff;
+        font-weight: 700;
+        padding: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        border: 1px solid #555;
+        transition: all 0.2s ease-in-out;
     }
-    section[data-testid="stMain"] .stButton > button:hover { border-color: #1DB954; color: #1DB954; transform: scale(1.02); }
+    section[data-testid="stMain"] .stButton > button:hover { 
+        border-color: #fff;
+        transform: scale(1.04);
+        background-color: rgba(255,255,255,0.1);
+    }
+    /* Pulsante Primario (Avvia Sessione / Genera) */
+    div[data-testid="stVerticalBlock"] > div:nth-child(5) .stButton > button {
+         background-color: #1DB954 !important;
+         color: #000 !important;
+         border: none !important;
+    }
+    div[data-testid="stVerticalBlock"] > div:nth-child(5) .stButton > button:hover {
+         background-color: #1ed760 !important;
+         transform: scale(1.02);
+    }
+
     </style>
 """, unsafe_allow_html=True)
 
 # --- 1. INIZIALIZZAZIONE ---
+
+# A. MOSTRA SPLASH SCREEN (Se necessario)
+loading_placeholder = render_splash_screen()
+
+# B. ESEGUI I CARICAMENTI PESANTI (Sotto lo Splash)
 if 'oracle' not in st.session_state:
-    with st.spinner("Sintonizzando Billie AI-lish..."):
+    
+    # Simula caricamento minimo se è troppo veloce, per godersi l'intro
+    # time.sleep(1.0) 
 
-        try:
-            if os.path.exists(ORACLE_PATH):
-                st.session_state.oracle = joblib.load(ORACLE_PATH)
-            else:
-                st.session_state.oracle = MusicOracle()
+    try:
+        if os.path.exists(ORACLE_PATH):
+            st.session_state.oracle = joblib.load(ORACLE_PATH)
+        else:
+            st.session_state.oracle = MusicOracle()
+    except Exception:
+        st.session_state.oracle = MusicOracle()
+
+    try:
+        # Questo è il passaggio più lento (carica CSV e crea Matrice)
+        st.session_state.recommender = get_recommender()
+    except Exception as e:
+        if loading_placeholder: loading_placeholder.empty()
+        st.error(f"System Error: {e}")
+        st.stop()
         
-        except ModuleNotFoundError:
-            st.sidebar.warning("Oracle rigenerato, cambio struttura")
-            st.session_state.oracle = MusicOracle()
-        except Exception as e:
-            st.sidebar.warning(f"Errore caricamento Oracle: {e}")
-            st.session_state.oracle = MusicOracle()
-
-
-        try:
-            st.session_state.recommender = get_recommender()
-        except Exception as e:
-            st.error(f"System Error: {e}")
-            st.stop()
+    # Inizializzazione variabili sessione
     st.session_state.past_track_ids = []
     st.session_state.suggestion_made = False
     st.session_state.current_track = None
     st.session_state.predicted_vector = None
-    
-    # --- STATO CODA E VIBE ---
     st.session_state.recs_queue = pd.DataFrame()
-    st.session_state.vibe_history = [50] # Parte da 50 (Neutro)
-    
-    # --- BLACKLIST TEMPORANEA (SESSIONE BROWSER) ---
+    st.session_state.vibe_history = [50]
     st.session_state.session_blacklist = []
+
+# C. DISSOLVENZA E CHIUSURA SPLASH SCREEN
+if loading_placeholder is not None:
+    # 1. Attendiamo un attimo per assicurare che l'utente abbia visto il logo
+    time.sleep(1.5)
+    
+    # 2. Aggiorniamo l'HTML con la versione che ha Opacity: 0 (Fade Out)
+    loading_placeholder.markdown(get_splash_html(fade_out=True), unsafe_allow_html=True)
+    
+    # 3. Attendiamo la durata della transizione CSS (1.5s)
+    time.sleep(1.5)
+    
+    # 4. Rimuoviamo il componente
+    loading_placeholder.empty()
+    st.session_state.first_load_done = True
 
 # --- FUNZIONE GENERAZIONE (BUFFERIZZATA + FILTRO BLACKLIST) ---
 def generate_new_recommendation(manual_target=None):
@@ -326,7 +501,7 @@ if 'history_df' not in st.session_state:
                 'artist_name': 'artist',
                 'genre': 'genres', 
                 'track_name': 'name', 
-                'song': 'name',
+                'song': 'name', 
                 'track': 'name'
             }
             history_df.rename(columns=rename_map, inplace=True)
