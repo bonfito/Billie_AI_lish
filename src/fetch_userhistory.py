@@ -182,6 +182,9 @@ def fetch_history():
         redirect_uri=os.getenv("SPOTIPY_REDIRECT_URI")
     ))
 
+    #me = sp.current_user()
+    #print("ME:", me.get("id"), me.get("display_name"), me.get("email"))
+
     if os.path.exists(HISTORY_FILE):
         try:
             df_existing = pd.read_csv(HISTORY_FILE)

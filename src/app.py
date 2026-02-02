@@ -772,7 +772,7 @@ if st.session_state.suggestion_made and st.session_state.current_track:
 
     #  SAVE (Sale Vibe Molto, Allena AI, Salva File, Next)
     with c_save:
-        if st.button("SALVA IN LIBRARY", key="btn_save"):
+        if st.button("SALVA IN PLAYLIST", key="btn_save"):
             with st.status("Salvataggio...", expanded=False) as status:
                 update_vibe(+20) # Vibe sale molto
                 
