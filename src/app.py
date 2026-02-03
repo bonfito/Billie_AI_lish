@@ -325,7 +325,6 @@ st.markdown("""
         letter-spacing: 1px;
         border: 1px solid #555;
         transition: all 0.2s ease-in-out;
-        margin-top:20px;
     }
     section[data-testid="stMain"] .stButton > button:hover { 
         border-color: #fff;
@@ -482,6 +481,64 @@ def load_data(history_path: str) -> pd.DataFrame:
     if os.path.exists(history_path):
         return pd.read_csv(history_path)
     return pd.DataFrame()
+# --- FUNZIONE DI CALCOLO E DEBUG ---
+def recalculate_user_stats():
+    """
+    Ricalcola Top Artist/Genre sulle ultime 50 righe e stampa un REPORT DI DEBUG
+    per verificare se stiamo guardando le canzoni giuste.
+    """
+    if 'history_df' in st.session_state and st.session_state.history_df is not None:
+        df = st.session_state.history_df
+        
+        if not df.empty:
+            # 🕵️ DEBUG: Identifichiamo il blocco analizzato
+            recent = df.tail(50)
+            
+            # Stampa nel terminale cosa sta guardando l'AI
+            print("\n" + "="*40)
+            print(f" ANALISI 'MOOD ATTUALE' (Ultime {len(recent)} righe)")
+            print(f" Prima canzone del blocco: {recent.iloc[0]['name']} - {recent.iloc[0]['artist']}")
+            print(f" Ultima canzone del blocco: {recent.iloc[-1]['name']} - {recent.iloc[-1]['artist']}")
+            print("="*40)
+
+            # --- 1. CALCOLO TOP ARTIST ---
+            try:
+                # Normalizza e pulisci
+                artists = recent['artist'].astype(str).dropna()
+                artists = artists[~artists.str.lower().isin(['unknown', 'nan', '', '[]'])]
+                # Rimuovi parentesi e virgolette
+                artists = artists.apply(lambda x: str(x).replace("['", "").replace("']", "").replace("'", "").replace('"', "").strip())
+                
+                if not artists.empty:
+                    counts = artists.value_counts()
+                    st.session_state.top_artist = counts.index[0]
+                    print(f" Artista Vincente: {st.session_state.top_artist} ({counts.iloc[0]} ascolti)")
+                else:
+                    st.session_state.top_artist = "N/A"
+            except Exception as e:
+                print(f" Errore artista: {e}")
+                st.session_state.top_artist = "-"
+
+            # --- 2. CALCOLO TOP GENRE ---
+            try:
+                genres = recent['genres'].astype(str).dropna()
+                genres = genres[~genres.str.lower().isin(['[]', 'unknown', 'nan', ''])]
+                
+                if not genres.empty:
+                    clean_genres = genres.apply(lambda x: str(x).replace("['", "").replace("']", "").replace("'", "").title())
+                    g_counts = clean_genres.value_counts()
+                    st.session_state.top_genre = g_counts.index[0]
+                    print(f" Genere Vincente: {st.session_state.top_genre}")
+                else:
+                    st.session_state.top_genre = "N/A"
+            except:
+                st.session_state.top_genre = "-"
+            print("="*40 + "\n")
+            
+    else:
+        st.session_state.top_artist = "-"
+        st.session_state.top_genre = "-"
+
 
 # NOTE: Rimossa sezione AUTO-FETCH per migliorare UX
 
@@ -548,7 +605,7 @@ if 'history_df' not in st.session_state:
             st.session_state.song_count = 0
             st.session_state.top_artist = "-"
             st.session_state.top_genre = "-"
-
+        recalculate_user_stats()
     except Exception:
         # Fallback totale per evitare crash
         st.session_state.history_df = None
@@ -561,30 +618,50 @@ if 'history_df' not in st.session_state:
 st.markdown("<div class='main-title'>BILLIE AI-LISH</div>", unsafe_allow_html=True)
 st.markdown("<div class='subtitle'>Artificial Music Agent</div>", unsafe_allow_html=True)
 
-# --- SIDEBAR ---
+
+# --- SIDEBAR (VISUALIZZAZIONE) ---
 st.sidebar.header("CONTROL ROOM")
-if st.session_state.get('oracle') and st.session_state.oracle.loss_history:
-    n_trained = len(st.session_state.oracle.loss_history)
+
+# Sezione Oracle
+if st.session_state.get('oracle') and hasattr(st.session_state.oracle, 'loss_history'):
+    history = st.session_state.oracle.loss_history
+    n_trained = len(history)
+    
     st.sidebar.success(f"Oracle: {n_trained} interazioni")
     
     if n_trained > 1:
-        first_loss = st.session_state.oracle.loss_history[0]
-        last_loss = st.session_state.oracle.loss_history[-1]
-        improvement = ((first_loss - last_loss) / first_loss) * 100
+        first_loss = history[0]
+        last_loss = history[-1]
+        if first_loss != 0:
+            improvement = ((first_loss - last_loss) / first_loss) * 100
+        else:
+            improvement = 0.0
+            
         st.sidebar.caption(f"Loss iniziale: {first_loss:.4f}")
         st.sidebar.caption(f"Loss attuale: {last_loss:.4f}")
+        
         if improvement > 0:
             st.sidebar.caption(f"Miglioramento: {improvement:.1f}%")
         else:
-            st.sidebar.caption(f"Loss in crescita (normale all'inizio)")
-st.sidebar.caption(f"Genre: {st.session_state.get('top_genre', '-')} | Artist: {st.session_state.get('top_artist', '-')}")
+            st.sidebar.caption(f"Loss in crescita (Adattamento)")
+
+st.sidebar.markdown("---")
+
+# Sezione Mood Utente
+# Usiamo le variabili di stato aggiornate dalla funzione sopra
+t_genre = st.session_state.get('top_genre', 'Calcolo...')
+t_artist = st.session_state.get('top_artist', 'Calcolo...')
+
+st.sidebar.markdown(f"**Mood Attuale (Last 50):**")
+st.sidebar.caption(f"🎵 Genere: {t_genre}")
+st.sidebar.caption(f"🎤 Artista: {t_artist}")
 
 # --- INDICATORE CODA ---
 q_len = len(st.session_state.recs_queue) if 'recs_queue' in st.session_state else 0
 if q_len > 0:
     st.sidebar.success(f"Coda Veloce Attiva: {q_len} brani pronti")
 else:
-    st.sidebar.info("Coda vuota")
+    st.sidebar.info("Coda vuota (Il prossimo click calcolerà un nuovo batch)")
 
 # --- TASTO RESET ---
 if st.sidebar.button(" RESETTA CERVELLO AI", type="primary"):
@@ -610,57 +687,66 @@ if st.sidebar.button("Aggiorna Cronologia"):
 c1, col_gen, c3 = st.columns([1, 2, 1])
 with col_gen:
     
-    # Se la coda è vuota, siamo all'inizio sessione
+    # 1. Calcola lo stato: siamo all'inizio (0) o stiamo già ascoltando (>0)?
+    q_len = len(st.session_state.recs_queue) if 'recs_queue' in st.session_state else 0
     is_start_session = (q_len == 0)
+    
+    # 2. Decidi l'etichetta del bottone PRIMA di crearlo
     btn_label = "AVVIA SESSIONE" if is_start_session else "GENERA PROSSIMA"
     
-    if st.button(btn_label, type="primary", key="main_gen"):
-        
-        # 1. LOGICA DI AVVIO SESSIONE (Fetch + Prima Generazione)
+    # 3. CREA L'UNICO BOTTONE (Questo è l'unico st.button in questa colonna)
+    pressed = st.button(btn_label, type="primary", key="main_gen_btn")
+    
+    if pressed:
+        # --- LOGICA A: AVVIO SESSIONE (Caricamenti Pesanti) ---
         if is_start_session:
+            # Usa st.status per raggruppare i messaggi e non spaccare il layout
             with st.status("Avvio Sessione...", expanded=True) as status:
                 
-                # A. Scaricamento Dati (Solo se non fatto di recente o forzato)
                 status.write(" Connessione a Spotify...")
                 try:
+                    # A. Scarica Dati
                     fetch_history()
-                    # Invalidiamo la cache per ricaricare i dati freschi
-                    load_data.clear() 
-                    if 'history_df' in st.session_state: 
-                        del st.session_state['history_df']
+                    load_data.clear() # Pulisce la cache
+                    
+                    # B. Ricarica DataFrame
+                    history_df = load_data(HISTORY_PATH)
+                    
+                    if history_df is not None and not history_df.empty:
+                        # Normalizzazione
+                        history_df.columns = history_df.columns.astype(str).str.lower().str.strip()
+                        rename_map = {'artists': 'artist', 'artist_name': 'artist', 'genre': 'genres', 'track_name': 'name', 'song': 'name', 'track': 'name'}
+                        history_df.rename(columns=rename_map, inplace=True)
+                        if 'artist' not in history_df.columns: history_df['artist'] = "Unknown"
+                        if 'genres' not in history_df.columns: history_df['genres'] = "[]"
+                        
+                        st.session_state.history_df = history_df
+                        
+                        # C. Calcola Contesto
+                        features = st.session_state.recommender.audio_cols
+                        valid = [c for c in features if c in history_df.columns]
+                        if valid:
+                            st.session_state.current_context = history_df[valid].mean().values
+                            st.session_state.song_count = len(history_df)
+
+                        # D. Aggiorna Statistiche (Kid Yugi ecc.)
+                        recalculate_user_stats()
+                
                 except Exception as e:
-                    st.error(f"Errore connessione: {e}")
-                    status.update(label="Errore!", state="error")
+                    st.error(f"Errore critico: {e}")
+                    status.update(label="Errore", state="error")
                     st.stop()
                 
+                # E. Genera Primo Batch
                 status.write(" Analisi DNA Musicale...")
-                # Forziamo il ricaricamento dei dati nello stato
-                # (Questo codice è duplicato dalla sezione di init ma serve qui per refresh immediato)
-                history_df = load_data(HISTORY_PATH)
-                if history_df is not None and not history_df.empty:
-                    # Normalizzazione colonne al volo
-                    history_df.columns = history_df.columns.astype(str).str.lower().str.strip()
-                    rename_map = {'artists': 'artist', 'artist_name': 'artist', 'genre': 'genres', 'track_name': 'name', 'song': 'name', 'track': 'name'}
-                    history_df.rename(columns=rename_map, inplace=True)
-                    if 'artist' not in history_df.columns: history_df['artist'] = "Unknown"
-                    if 'genres' not in history_df.columns: history_df['genres'] = "[]"
-                    st.session_state.history_df = history_df
-                    
-                    # Ricalcolo contesto
-                    features = st.session_state.recommender.audio_cols
-                    valid = [c for c in features if c in history_df.columns]
-                    if valid:
-                        st.session_state.current_context = history_df[valid].mean().values
-                
-                status.write(" Generazione Raccomandazioni...")
                 if generate_new_recommendation():
-                    status.update(label="Pronto!", state="complete")
-                    time.sleep(0.5) # Breve pausa per far vedere il completamento
+                    status.update(label="Sessione Avviata!", state="complete")
+                    time.sleep(0.5)
                     st.rerun()
                 else:
                     status.update(label="Nessun risultato trovato", state="error")
 
-        # 2. LOGICA DI GENERAZIONE SUCCESSIVA (Solo Next)
+        # --- LOGICA B: PROSSIMA CANZONE (Istantaneo) ---
         else:
             generate_new_recommendation()
             st.rerun()
@@ -734,7 +820,20 @@ if st.session_state.suggestion_made and st.session_state.current_track:
             html_stats += f"<div class='feature-item'><span class='feat-label'>{f.capitalize()}</span><span class='feat-val'>{val_s}</span></div>"
         html_stats += "</div>"
         st.markdown(html_stats, unsafe_allow_html=True)
-        
+
+    st.markdown(f"<div class='track-name'>{track['name']}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='artist-name'>{track['artist']}</div>", unsafe_allow_html=True)
+    g_str = str(track.get('genres', '')).replace("['", "").replace("']", "").replace("'", "").title()
+    if g_str == "[]" or g_str == "Unknown": g_str = "Genere non classificato"
+    
+    y = str(int(float(track.get('year', 0)))) if track.get('year') else ""
+    st.markdown(f"<div class='meta-tag'>{y} • {g_str}</div>", unsafe_allow_html=True)
+    
+    # DEBUG TAG VISIBILE A SCHERMO
+    reason = track.get('reason_text', 'Algoritmo')
+    match_score = track.get('match_percentage', 0)
+    st.markdown(f"<div class='debug-tag'>[DEBUG AI] Motivo: {reason} | Match Audio: {match_score}%</div>", unsafe_allow_html=True)
+
     # --- BOTTONI (Like, Dislike, Save) ---
     c_dislike, c_like, c_save = st.columns([1, 1, 2])
     
