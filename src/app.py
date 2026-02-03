@@ -539,6 +539,87 @@ def recalculate_user_stats():
         st.session_state.top_artist = "-"
         st.session_state.top_genre = "-"
 
+# --- FUNZIONE RIADDESTRAMENTO ORACLE SU NUOVE CANZONI ---
+def retrain_oracle_on_new_songs():
+    """
+    Riaddestra l'oracle solo sulle nuove canzoni che non ha mai visto.
+    Usa il flag oracle_trained_up_to_song per tracciare l'ultima canzone vista.
+    """
+    # Se non c'è cronologia o oracle, esci
+    if st.session_state.history_df is None or st.session_state.history_df.empty:
+        return
+    if not st.session_state.get('oracle'):
+        return
+    
+    # Prepara i dati
+    df = st.session_state.history_df.copy()
+    
+    # Ordina per tempo (se disponibile)
+    if 'played_at' in df.columns:
+        # Alcuni timestamp arrivano con microsecondi, altri no (formati ISO8601 misti).
+        # Usiamo parsing robusto per evitare crash.
+        df['played_at'] = pd.to_datetime(df['played_at'], errors='coerce', utc=True, format='mixed')
+        # Se alcuni valori sono irrecuperabili, li scartiamo per l'ordinamento.
+        df = df.dropna(subset=['played_at'])
+        df = df.sort_values(by='played_at', ascending=True).reset_index(drop=True)
+    
+    # Colonne audio
+    feature_cols = ['energy', 'valence', 'danceability', 'tempo',
+                    'loudness', 'speechiness', 'acousticness', 'instrumentalness',
+                    'liveness']
+    
+    # Verifica che le colonne esistano
+    missing = [c for c in feature_cols if c not in df.columns]
+    if missing:
+        print(f"Colonne mancanti per training: {missing}")
+        return
+    
+    # Recupera l'indice dell'ultima canzone su cui l'oracle è stato addestrato
+    last_trained_idx = st.session_state.get('oracle_trained_up_to_song', -1)
+    
+    # Calcola quante canzoni nuove ci sono
+    total_songs = len(df)
+    new_songs_count = total_songs - (last_trained_idx + 1)
+    
+    if new_songs_count <= 0:
+        print("Nessuna nuova canzone da addestrare")
+        return
+    
+    print(f"\n{'='*60}")
+    print(f"RIADDESTRAMENTO ORACLE SU {new_songs_count} NUOVE CANZONI")
+    print(f"{'='*60}")
+    
+    # Se è il primo addestramento (oracle vergine), usa la prima canzone come contesto iniziale
+    if last_trained_idx == -1:
+        current_context = df.loc[0, feature_cols].values
+        start_idx = 1  # inizia dalla seconda canzone
+    else:
+        # Altrimenti usa l'ultima canzone vista come contesto
+        current_context = df.loc[last_trained_idx, feature_cols].values
+        start_idx = last_trained_idx + 1
+    
+    # Loop di addestramento SOLO sulle nuove canzoni
+    for i in range(start_idx, total_songs):
+        target_track = df.loc[i, feature_cols].values
+        
+        # Addestra
+        st.session_state.oracle.train_incremental(current_context, target_track)
+        
+        # Aggiorna contesto (media mobile)
+        current_context = calculate_avalanche_context(current_context, target_track, n=5)
+    
+    # Aggiorna il flag: ora l'oracle ha visto fino all'ultima canzone
+    st.session_state.oracle_trained_up_to_song = total_songs - 1
+    
+    # Salva oracle su disco
+    try:
+        joblib.dump(st.session_state.oracle, ORACLE_PATH)
+        print(f"Oracle salvato. Totale interazioni: {len(st.session_state.oracle.loss_history)}")
+    except Exception as e:
+        print(f"Errore nel salvataggio dell'oracle: {e}")
+    
+    print(f"{'='*60}\n")
+
 
 # NOTE: Rimossa sezione AUTO-FETCH per migliorare UX
 
@@ -679,6 +760,21 @@ if st.sidebar.button("Aggiorna Cronologia"):
             fetch_history()
             if 'history_df' in st.session_state: del st.session_state['history_df']
             load_data.clear()
+            
+            # Ricarica i dati
+            history_df = load_data(HISTORY_PATH)
+            if history_df is not None and not history_df.empty:
+                # Normalizza
+                history_df.columns = history_df.columns.astype(str).str.lower().str.strip()
+                rename_map = {'artists': 'artist', 'artist_name': 'artist', 'genre': 'genres', 'track_name': 'name', 'song': 'name', 'track': 'name'}
+                history_df.rename(columns=rename_map, inplace=True)
+                if 'artist' not in history_df.columns: history_df['artist'] = "Unknown"
+                if 'genres' not in history_df.columns: history_df['genres'] = "[]"
+                st.session_state.history_df = history_df
+                
+                #Riaddestra oracle sulle nuove canzoni
+                #retrain_oracle_on_new_songs()
+            
             st.rerun()
         except Exception as e:
             st.sidebar.error(f"Errore: {e}")
@@ -731,6 +827,9 @@ with col_gen:
 
                         # D. Aggiorna Statistiche (Kid Yugi ecc.)
                         recalculate_user_stats()
+                        
+                        # E. Riaddestra oracle sulle nuove canzoni
+                        retrain_oracle_on_new_songs()
                 
                 except Exception as e:
                     st.error(f"Errore critico: {e}")

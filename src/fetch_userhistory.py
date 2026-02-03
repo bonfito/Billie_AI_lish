@@ -182,14 +182,12 @@ def fetch_history():
         redirect_uri=os.getenv("SPOTIPY_REDIRECT_URI")
     ))
 
-    #me = sp.current_user()
-    #print("ME:", me.get("id"), me.get("display_name"), me.get("email"))
-
     if os.path.exists(HISTORY_FILE):
         try:
             df_existing = pd.read_csv(HISTORY_FILE)
             if not df_existing.empty and 'played_at' in df_existing.columns:
-                df_existing['played_at'] = pd.to_datetime(df_existing['played_at'])
+                # FIX: format='mixed' permette di leggere date con e senza millisecondi
+                df_existing['played_at'] = pd.to_datetime(df_existing['played_at'], format='mixed')
                 last_timestamp = df_existing['played_at'].max()
                 print(f"Cronologia esistente trovata: {len(df_existing)} brani.")
                 print(f"Ultimo ascolto registrato: {last_timestamp}")
@@ -349,9 +347,7 @@ def fetch_history():
     scaler = MinMaxScaler()
     scaler.fit(ref_df[audio_cols])
     
-    joblib.dump({"scaler": scaler, "features": audio_cols}, SCALER_FILE)
-
-    
+    joblib.dump(scaler, SCALER_FILE)
     df_new[audio_cols] = scaler.transform(df_new[audio_cols])
 
     # 6. Merge
@@ -361,7 +357,8 @@ def fetch_history():
         df_updated = df_new
 
     # Sort & Cut
-    df_updated['played_at'] = pd.to_datetime(df_updated['played_at'])
+    # FIX: format='mixed' anche qui per sicurezza nel caso di merge eterogenei
+    df_updated['played_at'] = pd.to_datetime(df_updated['played_at'], format='mixed')
     df_updated = df_updated.sort_values(by='played_at', ascending=True)
 
     if len(df_updated) > 1000:
