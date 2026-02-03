@@ -325,6 +325,7 @@ st.markdown("""
         letter-spacing: 1px;
         border: 1px solid #555;
         transition: all 0.2s ease-in-out;
+        margin-top:20px;
     }
     section[data-testid="stMain"] .stButton > button:hover { 
         border-color: #fff;
@@ -583,7 +584,7 @@ q_len = len(st.session_state.recs_queue) if 'recs_queue' in st.session_state els
 if q_len > 0:
     st.sidebar.success(f"Coda Veloce Attiva: {q_len} brani pronti")
 else:
-    st.sidebar.info("Coda vuota (Il prossimo click calcolerà un nuovo batch)")
+    st.sidebar.info("Coda vuota")
 
 # --- TASTO RESET ---
 if st.sidebar.button(" RESETTA CERVELLO AI", type="primary"):
@@ -620,7 +621,7 @@ with col_gen:
             with st.status("Avvio Sessione...", expanded=True) as status:
                 
                 # A. Scaricamento Dati (Solo se non fatto di recente o forzato)
-                status.write("📡 Connessione a Spotify...")
+                status.write(" Connessione a Spotify...")
                 try:
                     fetch_history()
                     # Invalidiamo la cache per ricaricare i dati freschi
@@ -632,7 +633,7 @@ with col_gen:
                     status.update(label="Errore!", state="error")
                     st.stop()
                 
-                status.write("🧠 Analisi DNA Musicale...")
+                status.write(" Analisi DNA Musicale...")
                 # Forziamo il ricaricamento dei dati nello stato
                 # (Questo codice è duplicato dalla sezione di init ma serve qui per refresh immediato)
                 history_df = load_data(HISTORY_PATH)
@@ -651,7 +652,7 @@ with col_gen:
                     if valid:
                         st.session_state.current_context = history_df[valid].mean().values
                 
-                status.write("🎵 Generazione Raccomandazioni...")
+                status.write(" Generazione Raccomandazioni...")
                 if generate_new_recommendation():
                     status.update(label="Pronto!", state="complete")
                     time.sleep(0.5) # Breve pausa per far vedere il completamento
@@ -681,48 +682,59 @@ if st.session_state.suggestion_made and st.session_state.current_track:
     with col_stats:
         audio_cols = ['energy', 'valence', 'danceability', 'tempo', 'loudness', 'speechiness', 'acousticness', 'instrumentalness', 'liveness']
 
-        # Se lo scaler salva l'ordine delle feature, usiamolo per inverse_transform
+        # --- 1. INIZIALIZZAZIONE SICURA ---
+        real_data_map = {} 
         features_for_scaler = SCALER_FEATURES if SCALER_FEATURES else audio_cols
-        norm_vector = np.array([track.get(c, 0) for c in features_for_scaler]).reshape(1, -1)
-
-        real_data_map = {}
-        if scaler:
-            try:
-                real_vector = scaler.inverse_transform(norm_vector)[0]
-                real_data_map = dict(zip(features_for_scaler, real_vector))
-            except:
-                pass
         
+        # Tentativo di recupero valori reali dallo scaler (se disponibile)
+        try:
+            if scaler:
+                # Creiamo il vettore normalizzato
+                norm_vec = np.array([track.get(c, 0) for c in features_for_scaler]).reshape(1, -1)
+                # Tentiamo l'inversione
+                real_vec = scaler.inverse_transform(norm_vec)[0]
+                real_data_map = dict(zip(features_for_scaler, real_vec))
+        except:
+            pass # Se fallisce, useremo le formule di fallback nel loop
+
+        # --- 2. GENERAZIONE LISTA VISUALE ---
         display_feats = audio_cols 
         html_stats = "<div class='feature-list'><div style='color:#fff; font-weight:900; margin-bottom:10px; text-transform:uppercase; letter-spacing:2px; font-size:0.9rem;'>Track DNA</div>"
         
         for f in display_feats:
-            val_norm = track.get(f, 0)
+            val = track.get(f, 0)
+            
+            # --- LOGICA INTELLIGENTE DI VISUALIZZAZIONE ---
             if f == 'tempo':
-                bpm = real_data_map.get(f, val_norm * 160 + 40)
-                val_str = f"{int(bpm)} BPM"
+                # Caso 1: Valore già reale (es. 123.8) -> Usa quello
+                if val > 2.0:
+                    val_s = f"{int(val)} BPM"
+                # Caso 2: Valore normalizzato -> Prova Scaler -> Fallback Formula
+                else:
+                    bpm = real_data_map.get(f, val * 160 + 40)
+                    val_s = f"{int(bpm)} BPM"
+            
             elif f == 'loudness':
-                db = real_data_map.get(f, val_norm * 60 - 60)
-                val_str = f"{db:.1f} dB"
+                # Caso 1: Valore già in dB (es. -8.5) -> Usa quello
+                if val < -1.0 or val > 1.0: 
+                     val_s = f"{val:.1f} dB"
+                # Caso 2: Valore normalizzato -> Prova Scaler -> Fallback Formula
+                else:
+                     db = real_data_map.get(f, val * 60 - 60)
+                     val_s = f"{db:.1f} dB"
+            
             else:
-                val_str = f"{int(val_norm * 100)}"
-            html_stats += f"<div class='feature-item'><span class='feat-label'>{f.capitalize()}</span><span class='feat-val'>{val_str}</span></div>"
+                # Percentuali (Energy, Valence, ecc.)
+                # Gestisce sia 0-1 che 0-100
+                if val > 1.0:
+                    val_s = f"{int(val)}"
+                else:
+                    val_s = f"{int(val * 100)}"
+
+            html_stats += f"<div class='feature-item'><span class='feat-label'>{f.capitalize()}</span><span class='feat-val'>{val_s}</span></div>"
         html_stats += "</div>"
         st.markdown(html_stats, unsafe_allow_html=True)
-
-    st.markdown(f"<div class='track-name'>{track['name']}</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='artist-name'>{track['artist']}</div>", unsafe_allow_html=True)
-    g_str = str(track.get('genres', '')).replace("['", "").replace("']", "").replace("'", "").title()
-    if g_str == "[]" or g_str == "Unknown": g_str = "Genere non classificato"
-    
-    y = str(int(float(track.get('year', 0)))) if track.get('year') else ""
-    st.markdown(f"<div class='meta-tag'>{y} • {g_str}</div>", unsafe_allow_html=True)
-    
-    # DEBUG TAG VISIBILE A SCHERMO
-    reason = track.get('reason_text', 'Algoritmo')
-    match_score = track.get('match_percentage', 0)
-    st.markdown(f"<div class='debug-tag'>[DEBUG AI] Motivo: {reason} | Match Audio: {match_score}%</div>", unsafe_allow_html=True)
-
+        
     # --- BOTTONI (Like, Dislike, Save) ---
     c_dislike, c_like, c_save = st.columns([1, 1, 2])
     
