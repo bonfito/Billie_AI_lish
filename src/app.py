@@ -846,15 +846,55 @@ with col_hist:
 
 with col_radar:
     st.markdown("<div style='letter-spacing: 2px; font-weight: 900; color: #444; margin-top:20px; font-size: 0.8rem;'>TARGET DNA</div>", unsafe_allow_html=True)
-    vector_to_plot = st.session_state.predicted_vector
-    if vector_to_plot is None and st.session_state.current_context is not None:
-        vector_to_plot = st.session_state.current_context 
+    
+    # Recupera il vettore target
+    vector_source = st.session_state.predicted_vector
+    if vector_source is None and st.session_state.current_context is not None:
+        vector_source = st.session_state.current_context 
 
-    if vector_to_plot is not None:
+    if vector_source is not None:
+        # Creiamo una copia per normalizzarla SOLO per il grafico (senza toccare i dati veri)
+        # Assicuriamoci che sia float per evitare errori di divisione
+        plot_vec = np.array(vector_source[:9], dtype=float).copy()
+        
+        # --- NORMALIZZAZIONE INTELLIGENTE PER IL GRAFICO ---
+        # Indici: 0=Energy, 1=Valence, 2=Dance, 3=Tempo, 4=Loud, 5=Speech, 6=Acoust, 7=Instr, 8=Live
+        
+        # 1. TEMPO (Index 3): Se è "reale" (es. 120), portalo a 0-1
+        # Assumiamo un range tipico 40-200 BPM
+        if plot_vec[3] > 2.0: 
+            plot_vec[3] = (plot_vec[3] - 40) / 160.0
+        
+        # 2. LOUDNESS (Index 4): Se è in dB (es. -10), portalo a 0-1
+        # Assumiamo un range tipico -60dB a 0dB
+        if plot_vec[4] < 0:
+            plot_vec[4] = (plot_vec[4] + 60) / 60.0
+            
+        # 3. ALTRE FEATURE (0,1,2,5,6,7,8): Se sono in scala 0-100, dividi per 100
+        # Se sono già 0-1, restano uguali.
+        for i in [0, 1, 2, 5, 6, 7, 8]:
+            if plot_vec[i] > 1.0:
+                plot_vec[i] = plot_vec[i] / 100.0
+
+        # Clipping finale di sicurezza per restare nel grafico (0.0 - 1.0)
+        vec = np.clip(plot_vec, 0, 1)
+        
+        # --- CREAZIONE GRAFICO ---
         labels = ['Energy', 'Valence', 'Dance', 'Tempo', 'Loud', 'Speech', 'Acoust', 'Instr', 'Live']
-        vec = np.clip(vector_to_plot[:9], 0, 1)
         df_r = pd.DataFrame(dict(r=vec, theta=labels))
+        
         fig = px.line_polar(df_r, r='r', theta='theta', line_close=True, range_r=[0, 1])
-        fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', polar=dict(bgcolor='rgba(0,0,0,0)', radialaxis=dict(visible=False), angularaxis=dict(color='#888')), showlegend=False, height=250, margin=dict(l=40, r=40, t=20, b=20))
+        fig.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)', 
+            polar=dict(
+                bgcolor='rgba(0,0,0,0)', 
+                radialaxis=dict(visible=False), 
+                angularaxis=dict(color='#888')
+            ), 
+            showlegend=False, 
+            height=250, 
+            margin=dict(l=40, r=40, t=20, b=20)
+        )
         fig.update_traces(line_color='#1DB954', fill='toself', fillcolor='rgba(29, 185, 84, 0.15)', mode='lines+markers', marker=dict(size=6))
+        
         st.plotly_chart(fig, width='stretch', config={'displayModeBar': False})
