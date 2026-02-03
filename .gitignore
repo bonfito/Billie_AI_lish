@@ -49,3 +49,7 @@ data/oracle.pkl
 data/oracle.pkl
 data/oracle.pkl
 data/playlist_saved.csv
+# --- Python ---
+__pycache__/
+*.pyc
+
