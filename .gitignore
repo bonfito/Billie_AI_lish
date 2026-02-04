@@ -53,3 +53,4 @@ data/playlist_saved.csv
 __pycache__/
 *.pyc
 
+data/oracle_meta.json

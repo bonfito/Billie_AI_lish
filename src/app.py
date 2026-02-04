@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import joblib
+import json
 from dotenv import load_dotenv
 
 # Import dai moduli locali
@@ -28,6 +29,7 @@ LIKED_PATH = os.path.join(DATA_DIR, 'liked.csv')
 DISLIKED_PATH = os.path.join(DATA_DIR, 'disliked.csv')
 SCALER_PATH = os.path.join(DATA_DIR, 'scaler.save')
 ORACLE_PATH = os.path.join(DATA_DIR, 'oracle.pkl')
+ORACLE_META_PATH = os.path.join(DATA_DIR, 'oracle_meta.json')
 
 # Carica variabili ambiente
 load_dotenv()
@@ -539,6 +541,24 @@ def recalculate_user_stats():
         st.session_state.top_artist = "-"
         st.session_state.top_genre = "-"
 
+# --- ORACLE META (per training incrementale) ---
+def _load_oracle_meta() -> dict:
+    try:
+        if os.path.exists(ORACLE_META_PATH):
+            with open(ORACLE_META_PATH, 'r') as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def _save_oracle_meta(meta: dict) -> None:
+    try:
+        with open(ORACLE_META_PATH, 'w') as f:
+            json.dump(meta, f)
+    except Exception:
+        pass
+# --- /ORACLE META ---
+
 # --- FUNZIONE RIADDESTRAMENTO ORACLE SU NUOVE CANZONI ---
 def retrain_oracle_on_new_songs():
     """
@@ -547,77 +567,101 @@ def retrain_oracle_on_new_songs():
     """
     # Se non c'è cronologia o oracle, esci
     if st.session_state.history_df is None or st.session_state.history_df.empty:
+        # Meta consistency: if empty, reset meta file
+        _save_oracle_meta({})
         return
     if not st.session_state.get('oracle'):
         return
-    
+
     # Prepara i dati
     df = st.session_state.history_df.copy()
-    
+
     # Ordina per tempo (se disponibile)
     if 'played_at' in df.columns:
-        # Alcuni timestamp arrivano con microsecondi, altri no (formati ISO8601 misti).
-        # Usiamo parsing robusto per evitare crash.
         df['played_at'] = pd.to_datetime(df['played_at'], errors='coerce', utc=True, format='mixed')
-        # Se alcuni valori sono irrecuperabili, li scartiamo per l'ordinamento.
         df = df.dropna(subset=['played_at'])
         df = df.sort_values(by='played_at', ascending=True).reset_index(drop=True)
-    
+
     # Colonne audio
     feature_cols = ['energy', 'valence', 'danceability', 'tempo',
                     'loudness', 'speechiness', 'acousticness', 'instrumentalness',
                     'liveness']
-    
+
     # Verifica che le colonne esistano
     missing = [c for c in feature_cols if c not in df.columns]
     if missing:
         print(f"Colonne mancanti per training: {missing}")
         return
-    
-    # Recupera l'indice dell'ultima canzone su cui l'oracle è stato addestrato
-    last_trained_idx = st.session_state.get('oracle_trained_up_to_song', -1)
-    
-    # Calcola quante canzoni nuove ci sono
+
+    meta = _load_oracle_meta()
+
+    # Preferiamo il meta su disco (persistente). Fallback: inferiamo dai passi di training.
     total_songs = len(df)
+    last_rowcount = meta.get('last_trained_rowcount')
+    if isinstance(last_rowcount, int) and last_rowcount > 0:
+        last_trained_idx = int(last_rowcount) - 1
+    else:
+        trained_steps = len(getattr(st.session_state.oracle, 'loss_history', []) or [])
+        last_trained_idx = trained_steps if trained_steps > 0 else -1
+
+    # Clamp per sicurezza
+    last_trained_idx = max(-1, min(last_trained_idx, total_songs - 1))
+    st.session_state.oracle_trained_up_to_song = last_trained_idx
+
     new_songs_count = total_songs - (last_trained_idx + 1)
-    
     if new_songs_count <= 0:
         print("Nessuna nuova canzone da addestrare")
         return
-    
+
     print(f"\n{'='*60}")
     print(f"RIADDESTRAMENTO ORACLE SU {new_songs_count} NUOVE CANZONI")
     print(f"{'='*60}")
-    
-    # Se è il primo addestramento (oracle vergine), usa la prima canzone come contesto iniziale
+
+    # Recupera contesto dall'ultima sessione, se disponibile
+    current_context = None
+    last_ctx = meta.get('last_context')
+    if isinstance(last_ctx, list) and len(last_ctx) == len(feature_cols):
+        try:
+            current_context = np.array(last_ctx, dtype=float)
+        except Exception:
+            current_context = None
+
     if last_trained_idx == -1:
-        current_context = df.loc[0, feature_cols].values
-        start_idx = 1  # inizia dalla seconda canzone
+        # Primo addestramento: contesto iniziale = prima canzone
+        current_context = df.loc[0, feature_cols].values.astype(float)
+        start_idx = 1
     else:
-        # Altrimenti usa l'ultima canzone vista come contesto
-        current_context = df.loc[last_trained_idx, feature_cols].values
         start_idx = last_trained_idx + 1
-    
+        # Se non abbiamo il contesto salvato, ricostruiamolo fino a last_trained_idx
+        if current_context is None:
+            current_context = df.loc[0, feature_cols].values.astype(float)
+            for j in range(1, last_trained_idx + 1):
+                tgt_j = df.loc[j, feature_cols].values.astype(float)
+                current_context = calculate_avalanche_context(current_context, tgt_j, n=5)
+
     # Loop di addestramento SOLO sulle nuove canzoni
     for i in range(start_idx, total_songs):
         target_track = df.loc[i, feature_cols].values
-        
-        # Addestra
         st.session_state.oracle.train_incremental(current_context, target_track)
-        
-        # Aggiorna contesto (media mobile)
         current_context = calculate_avalanche_context(current_context, target_track, n=5)
-    
+
     # Aggiorna il flag: ora l'oracle ha visto fino all'ultima canzone
     st.session_state.oracle_trained_up_to_song = total_songs - 1
-    
+
     # Salva oracle su disco
     try:
         joblib.dump(st.session_state.oracle, ORACLE_PATH)
+
+        # Salva anche meta: quante righe viste + ultimo contesto (per evitare retrain completo al prossimo avvio)
+        _save_oracle_meta({
+            'last_trained_rowcount': int(total_songs),
+            'last_context': [float(x) for x in np.array(current_context, dtype=float).tolist()],
+        })
+
         print(f"Oracle salvato. Totale interazioni: {len(st.session_state.oracle.loss_history)}")
     except Exception as e:
         print(f"Errore nel salvataggio dell'oracle: {e}")
-    
+
     print(f"{'='*60}\n")
 
 
