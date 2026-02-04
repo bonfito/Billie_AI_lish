@@ -144,11 +144,11 @@ def get_splash_html(fade_out=False):
     <div class="splash-container">
         <div class="splash-background"></div>
         <div class="splash-title">BILLIE AI-LISH</div>
-        <div class="splash-subtitle">INITIALIZING NEURAL AUDIO ENGINE...</div>
+        <div class="splash-subtitle">SCANSIONE DATASET IN CORSO...</div>
     </div>
     """
 
-# --- FUNZIONE PRINCIPALE SPLASH ---
+
 def render_splash_screen():
     # Se è la prima volta che entriamo nella sessione
     if 'first_load_done' not in st.session_state:
@@ -158,13 +158,14 @@ def render_splash_screen():
         return placeholder
     return None
 
-# --- CACHED RECOMMENDER FACTORY ---
+
+#cache recommender
 @st.cache_resource(show_spinner=False)
 def get_recommender():
-    """Istanzia il recommender una sola volta (Streamlit rerun-safe)."""
+    #Istanzia il recommender una sola volta (Streamlit rerun-safe)
     return SongRecommender()
 
-# --- CARICAMENTO SCALER ---
+# carica scaler
 SCALER_FEATURES = None
 try:
     payload = joblib.load(SCALER_PATH)
@@ -176,7 +177,7 @@ try:
 except Exception:
     scaler = None
 
-# --- CSS GENERALE  ---
+# CSS 
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
@@ -347,15 +348,15 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 1. INIZIALIZZAZIONE ---
+# INIZIALIZZAZIONE
 
-# A. MOSTRA SPLASH SCREEN (Se necessario)
+# mostra splash screen (schermata iniziale con foto canzoni)
 loading_placeholder = render_splash_screen()
 
-# B. ESEGUI I CARICAMENTI PESANTI (Sotto lo Splash)
+# esegue i caricamenti durante la schermata
 if 'oracle' not in st.session_state:
     
-    # Simula caricamento minimo se è troppo veloce, per godersi l'intro
+    # Simula caricamento minimo se è troppo veloce
     # time.sleep(1.0) 
 
     try:
@@ -383,26 +384,26 @@ if 'oracle' not in st.session_state:
     st.session_state.vibe_history = [50]
     st.session_state.session_blacklist = []
 
-# C. DISSOLVENZA E CHIUSURA SPLASH SCREEN
+# effetto dissolvenza
 if loading_placeholder is not None:
-    # 1. Attendiamo un attimo per assicurare che l'utente abbia visto il logo
+    
     time.sleep(1.5)
     
-    # 2. Aggiorniamo l'HTML con la versione che ha Opacity: 0 (Fade Out)
+    
     loading_placeholder.markdown(get_splash_html(fade_out=True), unsafe_allow_html=True)
     
-    # 3. Attendiamo la durata della transizione CSS (1.5s)
+    
     time.sleep(1.5)
     
-    # 4. Rimuoviamo il componente
+    # Rimuoviamo il componente
     loading_placeholder.empty()
     st.session_state.first_load_done = True
 
-# --- FUNZIONE GENERAZIONE (BUFFERIZZATA + FILTRO BLACKLIST) ---
+# funzione generazione
 def generate_new_recommendation(manual_target=None):
     if st.session_state.history_df is not None:
         try:
-            # 1. Se c'è un target manuale (Slider) o la coda è vuota, ricalcoliamo tutto
+            # Se c'è un target manuale o la coda è vuota, ricalcoliamo tutto
             if manual_target is not None or st.session_state.recs_queue.empty:
                 st.session_state.recs_queue = pd.DataFrame() # Reset coda
                 recs_df, pred_vector = st.session_state.recommender.recommend(
@@ -412,13 +413,13 @@ def generate_new_recommendation(manual_target=None):
                     # Passiamo la blacklist della sessione al Recommender
                     session_blacklist=st.session_state.session_blacklist 
                 )
-            # 2. Se la coda ha canzoni, usiamo quelle 
+            # se vi sono canzoni nella coda, usiamo quelle 
             else:
                 recs_df = st.session_state.recs_queue
                 # Manteniamo il vettore target precedente
                 pred_vector = st.session_state.predicted_vector if st.session_state.predicted_vector is not None else np.zeros(9)
 
-            # --- CONTROLLO ANTI-CRASH ---
+            # controllo per evitare crash
             if recs_df is None or recs_df.empty:
                 st.warning("Nessuna canzone trovata. I filtri potrebbero essere troppo stretti.")
                 return False
@@ -445,7 +446,7 @@ def generate_new_recommendation(manual_target=None):
             return False
     return False
 
-# --- FUNZIONE SALVATAGGIO FEEDBACK (LIKE / DISLIKE) ---
+# funzione salvataggio feedback (like dislike)
 def append_feedback_csv(csv_path, track_dict, real_g=None, real_p=None):
     """Salva una traccia su un CSV dedicato (liked/disliked)"""
     try:
@@ -465,7 +466,7 @@ def append_feedback_csv(csv_path, track_dict, real_g=None, real_p=None):
     except Exception as e:
         st.warning(f"Impossibile salvare feedback su {os.path.basename(csv_path)}: {e}")
 
-# --- FUNZIONE AGGIORNAMENTO VIBE ---
+# AGGIORNAMENTO VIBE
 def update_vibe(points):
     """Aggiorna il grafico della vibe (0-100)"""
     current_score = st.session_state.vibe_history[-1]
@@ -475,7 +476,7 @@ def update_vibe(points):
     if len(st.session_state.vibe_history) > 50:
         st.session_state.vibe_history.pop(0)
 
-# --- 2. CARICAMENTO STORIA ---
+#CARICO LA CRONOLOGIA UTENTE    
 
 @st.cache_data(show_spinner=False)
 def load_data(history_path: str) -> pd.DataFrame:
@@ -483,7 +484,7 @@ def load_data(history_path: str) -> pd.DataFrame:
     if os.path.exists(history_path):
         return pd.read_csv(history_path)
     return pd.DataFrame()
-# --- FUNZIONE DI CALCOLO E DEBUG ---
+# FUNZIONE DEBUG
 def recalculate_user_stats():
     """
     Ricalcola Top Artist/Genre sulle ultime 50 righe e stampa un REPORT DI DEBUG
@@ -503,7 +504,7 @@ def recalculate_user_stats():
             print(f" Ultima canzone del blocco: {recent.iloc[-1]['name']} - {recent.iloc[-1]['artist']}")
             print("="*40)
 
-            # --- 1. CALCOLO TOP ARTIST ---
+            # CALCOLO TOP ARTIST
             try:
                 # Normalizza e pulisci
                 artists = recent['artist'].astype(str).dropna()
@@ -521,7 +522,7 @@ def recalculate_user_stats():
                 print(f" Errore artista: {e}")
                 st.session_state.top_artist = "-"
 
-            # --- 2. CALCOLO TOP GENRE ---
+            # CALCOLO GENERE TOP
             try:
                 genres = recent['genres'].astype(str).dropna()
                 genres = genres[~genres.str.lower().isin(['[]', 'unknown', 'nan', ''])]
@@ -541,7 +542,7 @@ def recalculate_user_stats():
         st.session_state.top_artist = "-"
         st.session_state.top_genre = "-"
 
-# --- ORACLE META (per training incrementale) ---
+# ORACLE PER TRAINING INCREMENTALE
 def _load_oracle_meta() -> dict:
     try:
         if os.path.exists(ORACLE_META_PATH):
@@ -557,9 +558,9 @@ def _save_oracle_meta(meta: dict) -> None:
             json.dump(meta, f)
     except Exception:
         pass
-# --- /ORACLE META ---
 
-# --- FUNZIONE RIADDESTRAMENTO ORACLE SU NUOVE CANZONI ---
+
+# FUNZIONE RIADDESTRAMENTO ORACLE SU NUOVE CANZONI 
 def retrain_oracle_on_new_songs():
     """
     Riaddestra l'oracle solo sulle nuove canzoni che non ha mai visto.
@@ -674,11 +675,11 @@ if 'history_df' not in st.session_state:
         # Se il file esiste ed è stato caricato
         if history_df is not None and not history_df.empty:
             
-            # --- FIX CRUCIALE: NORMALIZZAZIONE COLONNE ---
-            # 1. Tutto minuscolo e senza spazi
+            # NORMALIZZAZIONE COLONNE
+            
             history_df.columns = history_df.columns.astype(str).str.lower().str.strip()
             
-            # 2. Rinomina colonne problematiche (artists -> artist, genre -> genres)
+            # REMAP COLONNE PER EVITARE ERRORI
             rename_map = {
                 'artists': 'artist', 
                 'artist_name': 'artist',
@@ -689,7 +690,7 @@ if 'history_df' not in st.session_state:
             }
             history_df.rename(columns=rename_map, inplace=True)
             
-            # 3. Verifica esistenza 'artist' (Evita il KeyError)
+            #Verifica esistenza 'artist' (Evita il KeyError)
             if 'artist' not in history_df.columns:
                 # Se manca ancora, crea colonna dummy per non crashare
                 history_df['artist'] = "Unknown"
@@ -698,10 +699,10 @@ if 'history_df' not in st.session_state:
             if 'genres' not in history_df.columns:
                 history_df['genres'] = "[]"
 
-            # Ora è sicuro assegnarlo allo stato
+            # lo assegna allo stato (dopo che sono stati evitati eventuali errori)
             st.session_state.history_df = history_df
             
-            # --- Calcolo Contesto e Statistiche ---
+            # calcolo contesto e statistiche
             features = st.session_state.recommender.audio_cols
             valid = [c for c in features if c in history_df.columns]
             
@@ -709,11 +710,11 @@ if 'history_df' not in st.session_state:
                 st.session_state.current_context = history_df[valid].mean().values
                 st.session_state.song_count = len(history_df)
                 
-                # Calcolo Top Genre (sicuro perché la colonna esiste per forza ora)
+                # calcolo il genere top
                 v_gen = history_df[~history_df['genres'].isin(['unknown', 'nan', '[]'])]['genres']
                 st.session_state.top_genre = v_gen.mode()[0].title() if not v_gen.empty else "N/A"
                 
-                # Calcolo Top Artist (sicuro perché la colonna esiste per forza ora)
+                # calcolo artista top
                 v_art = history_df[~history_df['artist'].isin(['unknown', 'nan', 'Unknown'])]['artist']
                 st.session_state.top_artist = v_art.mode()[0] if not v_art.empty else "N/A"
             else:
@@ -739,12 +740,12 @@ if 'history_df' not in st.session_state:
         st.session_state.top_artist = "-"
         st.session_state.top_genre = "-"
 
-# --- HEADER ---
+# header
 st.markdown("<div class='main-title'>BILLIE AI-LISH</div>", unsafe_allow_html=True)
 st.markdown("<div class='subtitle'>Artificial Music Agent</div>", unsafe_allow_html=True)
 
 
-# --- SIDEBAR (VISUALIZZAZIONE) ---
+# sidebar
 st.sidebar.header("CONTROL ROOM")
 
 # Sezione Oracle
@@ -781,7 +782,7 @@ st.sidebar.markdown(f"**Mood Attuale (Last 50):**")
 st.sidebar.caption(f"🎵 Genere: {t_genre}")
 st.sidebar.caption(f"🎤 Artista: {t_artist}")
 
-# --- INDICATORE CODA ---
+# indicatore coda (brani che vengono proposti all'utente)
 q_len = len(st.session_state.recs_queue) if 'recs_queue' in st.session_state else 0
 if q_len > 0:
     st.sidebar.success(f"Coda Veloce Attiva: {q_len} brani pronti")
@@ -816,11 +817,11 @@ if st.sidebar.button("Aggiorna Cronologia"):
         except Exception as e:
             st.sidebar.error(f"Errore: {e}")
 
-# --- GENERAZIONE ---
+# generazione
 c1, col_gen, c3 = st.columns([1, 2, 1])
 with col_gen:
     
-    # 1. Calcola lo stato della coda
+    # calcola lo stato della coda
     if 'recs_queue' in st.session_state:
         q_len = len(st.session_state.recs_queue)
     else:
@@ -829,7 +830,7 @@ with col_gen:
     is_start_session = (q_len == 0)
     btn_label = "AVVIA SESSIONE" if is_start_session else "GENERA PROSSIMA"
     
-    # 2. CREA UNO SPAZIO VUOTO (Placeholder) PER IL BOTTONE
+    #  CREA UNO SPAZIO VUOTO PER IL BOTTONE (placeholder)
     # Questo ci permette di cancellarlo dopo il click
     btn_placeholder = st.empty()
     
@@ -837,10 +838,9 @@ with col_gen:
     clicked = btn_placeholder.button(btn_label, type="primary", key="final_gen_key")
     
     if clicked:
-        # 🔥 MAGIA: FAI SPARIRE IL BOTTONE SUBITO!
         btn_placeholder.empty() 
         
-        # --- CASO A: AVVIO SESSIONE (Caricamenti) ---
+        
         if is_start_session:
             with st.spinner("Sintonizzazione AI in corso..."):
                 try:
@@ -866,7 +866,7 @@ with col_gen:
 
                         recalculate_user_stats()
                         
-                        # E. Riaddestra oracle sulle nuove canzoni
+                        #Riaddestra oracle sulle nuove canzoni
                         retrain_oracle_on_new_songs()
                 
                 except Exception as e:
@@ -879,14 +879,14 @@ with col_gen:
                 else:
                     st.error("Nessun risultato trovato. Riprova.")
 
-        # --- CASO B: PROSSIMA CANZONE (Veloce) ---
+        #  PROSSIMA CANZONE
         else:
             # Anche qui il bottone è sparito, quindi non puoi cliccarlo due volte
             with st.spinner("Generazione..."):
                 generate_new_recommendation()
                 st.rerun()
 
-# --- DISPLAY CANZONE ---
+#DISPLAY CANZONE 
 if st.session_state.suggestion_made and st.session_state.current_track:
     track = st.session_state.current_track
     tid = track.get('id')
@@ -903,7 +903,7 @@ if st.session_state.suggestion_made and st.session_state.current_track:
     with col_stats:
         audio_cols = ['energy', 'valence', 'danceability', 'tempo', 'loudness', 'speechiness', 'acousticness', 'instrumentalness', 'liveness']
 
-        # --- 1. INIZIALIZZAZIONE SICURA ---
+        # INIZIALIZZAZIONE
         real_data_map = {} 
         features_for_scaler = SCALER_FEATURES if SCALER_FEATURES else audio_cols
         
@@ -918,28 +918,28 @@ if st.session_state.suggestion_made and st.session_state.current_track:
         except:
             pass # Se fallisce, useremo le formule di fallback nel loop
 
-        # --- 2. GENERAZIONE LISTA VISUALE ---
+        # GENERAZIONE LISTA VISUALE 
         display_feats = audio_cols 
         html_stats = "<div class='feature-list'><div style='color:#fff; font-weight:900; margin-bottom:10px; text-transform:uppercase; letter-spacing:2px; font-size:0.9rem;'>Track DNA</div>"
         
         for f in display_feats:
             val = track.get(f, 0)
             
-            # --- LOGICA INTELLIGENTE DI VISUALIZZAZIONE ---
+            # LOGICA VISUALIZZAZIONE 
             if f == 'tempo':
-                # Caso 1: Valore già reale (es. 123.8) -> Usa quello
+                # Valore già reale (es. 123.8) -> Usa quello
                 if val > 2.0:
                     val_s = f"{int(val)} BPM"
-                # Caso 2: Valore normalizzato -> Prova Scaler -> Fallback Formula
+                # Valore normalizzato -> Prova Scaler -> Fallback Formula
                 else:
                     bpm = real_data_map.get(f, val * 160 + 40)
                     val_s = f"{int(bpm)} BPM"
             
             elif f == 'loudness':
-                # Caso 1: Valore già in dB (es. -8.5) -> Usa quello
+                # Valore già in dB (es. -8.5) -> Usa quello
                 if val < -1.0 or val > 1.0: 
                      val_s = f"{val:.1f} dB"
-                # Caso 2: Valore normalizzato -> Prova Scaler -> Fallback Formula
+                #  Valore normalizzato -> Prova Scaler -> Fallback Formula
                 else:
                      db = real_data_map.get(f, val * 60 - 60)
                      val_s = f"{db:.1f} dB"
@@ -969,7 +969,7 @@ if st.session_state.suggestion_made and st.session_state.current_track:
     match_score = track.get('match_percentage', 0)
     st.markdown(f"<div class='debug-tag'>[DEBUG AI] Motivo: {reason} | Match Audio: {match_score}%</div>", unsafe_allow_html=True)
 
-    # --- BOTTONI (Like, Dislike, Save) ---
+    #BOTTONI (Like, Dislike, Save)
     c_dislike, c_like, c_save = st.columns([1, 1, 2])
     
     with c_dislike:
@@ -994,7 +994,7 @@ if st.session_state.suggestion_made and st.session_state.current_track:
             real_g, real_p = get_track_details(track['id'])
             append_feedback_csv(LIKED_PATH, track, real_g, real_p)
 
-            # 1. Allenamento Oracle
+            #  Allenamento Oracle
             cols = st.session_state.recommender.audio_cols
             feats = np.array([track[k] for k in cols])
             if st.session_state.oracle:
@@ -1006,7 +1006,7 @@ if st.session_state.suggestion_made and st.session_state.current_track:
                     joblib.dump(st.session_state.oracle, ORACLE_PATH)
                 except Exception: pass
 
-            # 2. Aggiorna Contesto
+            # Aggiorna Contesto
             st.session_state.current_context = calculate_avalanche_context(st.session_state.current_context, feats, st.session_state.song_count)
 
             st.session_state.session_blacklist.append(track['id'])
@@ -1043,12 +1043,12 @@ if st.session_state.suggestion_made and st.session_state.current_track:
                 
                 st.session_state.session_blacklist.append(track['id'])
                 
-                # 1. Salva SOLO su CSV Playlist (DISCO)
+                #  Salva SOLO su CSV Playlist (DISCO)
                 new_row = {'id': track['id'], 'name': track['name'], 'artist': track['artist'], 'genres': real_g, 'popularity': real_p, 'year': track.get('year'), **{k: track[k] for k in cols}}
                 df_new = pd.DataFrame([new_row])
                 df_new.to_csv(PLAYLIST_SAVED_PATH, mode='a', header=not os.path.exists(PLAYLIST_SAVED_PATH), index=False)
                 
-                # 2. AGGIORNA MEMORIA SESSIONE (RAM) - NON SU DISCO
+                #  AGGIORNA MEMORIA SESSIONE (RAM) - NON SU DISCO
                 st.session_state.history_df = pd.concat([st.session_state.history_df, df_new], ignore_index=True)
 
                 # NOTA: Non azzeriamo la coda qui, proseguiamo con la prossima
@@ -1058,12 +1058,12 @@ if st.session_state.suggestion_made and st.session_state.current_track:
 
 st.markdown("---")
 
-# --- GRAFICO VIBE (SATISFACTION) ---
+# GRAFICO VIBE DELLA SESSIONE
 st.markdown("<div style='letter-spacing: 2px; font-weight: 900; color: #444; margin-top:20px; font-size: 0.8rem;'>SESSION VIBE</div>", unsafe_allow_html=True)
 vibe_data = pd.DataFrame(st.session_state.vibe_history, columns=['Vibe'])
 st.line_chart(vibe_data, height=150, color='#1DB954')
 
-# --- HISTORY & RADAR ---
+#  HISTORY E RADAR FEATURES
 col_hist, col_radar = st.columns([1, 1])
 
 with col_hist:
@@ -1091,20 +1091,20 @@ with col_radar:
         # Assicuriamoci che sia float per evitare errori di divisione
         plot_vec = np.array(vector_source[:9], dtype=float).copy()
         
-        # --- NORMALIZZAZIONE INTELLIGENTE PER IL GRAFICO ---
+        # NORMALIZZAZIONE PER IL GRAFICO
         # Indici: 0=Energy, 1=Valence, 2=Dance, 3=Tempo, 4=Loud, 5=Speech, 6=Acoust, 7=Instr, 8=Live
         
-        # 1. TEMPO (Index 3): Se è "reale" (es. 120), portalo a 0-1
+        #  TEMPO (Index 3): Se è "reale" (es. 120), portalo a 0-1
         # Assumiamo un range tipico 40-200 BPM
         if plot_vec[3] > 2.0: 
             plot_vec[3] = (plot_vec[3] - 40) / 160.0
         
-        # 2. LOUDNESS (Index 4): Se è in dB (es. -10), portalo a 0-1
+        #  LOUDNESS (Index 4): Se è in dB (es. -10), portalo a 0-1
         # Assumiamo un range tipico -60dB a 0dB
         if plot_vec[4] < 0:
             plot_vec[4] = (plot_vec[4] + 60) / 60.0
             
-        # 3. ALTRE FEATURE (0,1,2,5,6,7,8): Se sono in scala 0-100, dividi per 100
+        #  ALTRE FEATURE (0,1,2,5,6,7,8): Se sono in scala 0-100, dividi per 100
         # Se sono già 0-1, restano uguali.
         for i in [0, 1, 2, 5, 6, 7, 8]:
             if plot_vec[i] > 1.0:
@@ -1113,7 +1113,7 @@ with col_radar:
         # Clipping finale di sicurezza per restare nel grafico (0.0 - 1.0)
         vec = np.clip(plot_vec, 0, 1)
         
-        # --- CREAZIONE GRAFICO ---
+        # CREAZIONE GRAFICO 
         labels = ['Energy', 'Valence', 'Dance', 'Tempo', 'Loud', 'Speech', 'Acoust', 'Instr', 'Live']
         df_r = pd.DataFrame(dict(r=vec, theta=labels))
         

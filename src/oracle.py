@@ -16,15 +16,15 @@ class MusicOracle:
         self.is_trained = False
 
     def train_incremental(self, context_vector, target_vector):
-        """Addestra l'IA sulla transizione attuale"""
-        X = np.array(context_vector).reshape(1, -1)
-        y = np.array(target_vector).reshape(1, -1)
-        self.model.partial_fit(X, y)
+        #Addestra l'IA sulla transizione attuale
+        X = np.array(context_vector).reshape(1, -1) #input prima canzone 
+        y = np.array(target_vector).reshape(1, -1) #scelta effettuata dall'utente
+        self.model.partial_fit(X, y) #apprende la transizione
         self.loss_history.append(self.model.loss_)
         self.is_trained = True
 
     def predict_target(self, current_context):
-        """Prevede il mood della prossima canzone"""
+        #Prevede il mood della prossima canzone
         if not self.is_trained:
             return np.random.rand(9)
         return self.model.predict(np.array(current_context).reshape(1, -1))[0]
