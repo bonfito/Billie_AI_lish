@@ -174,7 +174,7 @@ try:
 except Exception:
     scaler = None
 
-# --- CSS GENERALE (FONT STANDARD STREAMLIT) ---
+# --- CSS GENERALE  ---
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
@@ -410,7 +410,7 @@ def generate_new_recommendation(manual_target=None):
                     # Passiamo la blacklist della sessione al Recommender
                     session_blacklist=st.session_state.session_blacklist 
                 )
-            # 2. Se la coda ha canzoni, usiamo quelle (ISTANTANEO)
+            # 2. Se la coda ha canzoni, usiamo quelle 
             else:
                 recs_df = st.session_state.recs_queue
                 # Manteniamo il vettore target precedente
@@ -491,7 +491,7 @@ def recalculate_user_stats():
         df = st.session_state.history_df
         
         if not df.empty:
-            # 🕵️ DEBUG: Identifichiamo il blocco analizzato
+            #  DEBUG: Identifichiamo il blocco analizzato
             recent = df.tail(50)
             
             # Stampa nel terminale cosa sta guardando l'AI
@@ -687,33 +687,36 @@ if st.sidebar.button("Aggiorna Cronologia"):
 c1, col_gen, c3 = st.columns([1, 2, 1])
 with col_gen:
     
-    # 1. Calcola lo stato: siamo all'inizio (0) o stiamo già ascoltando (>0)?
-    q_len = len(st.session_state.recs_queue) if 'recs_queue' in st.session_state else 0
+    # 1. Calcola lo stato della coda
+    if 'recs_queue' in st.session_state:
+        q_len = len(st.session_state.recs_queue)
+    else:
+        q_len = 0
+        
     is_start_session = (q_len == 0)
-    
-    # 2. Decidi l'etichetta del bottone PRIMA di crearlo
     btn_label = "AVVIA SESSIONE" if is_start_session else "GENERA PROSSIMA"
     
-    # 3. CREA L'UNICO BOTTONE (Questo è l'unico st.button in questa colonna)
-    pressed = st.button(btn_label, type="primary", key="main_gen_btn")
+    # 2. CREA UNO SPAZIO VUOTO (Placeholder) PER IL BOTTONE
+    # Questo ci permette di cancellarlo dopo il click
+    btn_placeholder = st.empty()
     
-    if pressed:
-        # --- LOGICA A: AVVIO SESSIONE (Caricamenti Pesanti) ---
+    # 3. DISEGNA IL BOTTONE DENTRO IL PLACEHOLDER
+    clicked = btn_placeholder.button(btn_label, type="primary", key="final_gen_key")
+    
+    if clicked:
+        # 🔥 MAGIA: FAI SPARIRE IL BOTTONE SUBITO!
+        btn_placeholder.empty() 
+        
+        # --- CASO A: AVVIO SESSIONE (Caricamenti) ---
         if is_start_session:
-            # Usa st.status per raggruppare i messaggi e non spaccare il layout
-            with st.status("Avvio Sessione...", expanded=True) as status:
-                
-                status.write(" Connessione a Spotify...")
+            with st.spinner("Sintonizzazione AI in corso..."):
                 try:
-                    # A. Scarica Dati
                     fetch_history()
-                    load_data.clear() # Pulisce la cache
+                    load_data.clear() 
                     
-                    # B. Ricarica DataFrame
                     history_df = load_data(HISTORY_PATH)
                     
                     if history_df is not None and not history_df.empty:
-                        # Normalizzazione
                         history_df.columns = history_df.columns.astype(str).str.lower().str.strip()
                         rename_map = {'artists': 'artist', 'artist_name': 'artist', 'genre': 'genres', 'track_name': 'name', 'song': 'name', 'track': 'name'}
                         history_df.rename(columns=rename_map, inplace=True)
@@ -722,34 +725,30 @@ with col_gen:
                         
                         st.session_state.history_df = history_df
                         
-                        # C. Calcola Contesto
                         features = st.session_state.recommender.audio_cols
                         valid = [c for c in features if c in history_df.columns]
                         if valid:
                             st.session_state.current_context = history_df[valid].mean().values
                             st.session_state.song_count = len(history_df)
 
-                        # D. Aggiorna Statistiche (Kid Yugi ecc.)
                         recalculate_user_stats()
                 
                 except Exception as e:
                     st.error(f"Errore critico: {e}")
-                    status.update(label="Errore", state="error")
                     st.stop()
                 
-                # E. Genera Primo Batch
-                status.write(" Analisi DNA Musicale...")
                 if generate_new_recommendation():
-                    status.update(label="Sessione Avviata!", state="complete")
-                    time.sleep(0.5)
+                    time.sleep(0.5) 
                     st.rerun()
                 else:
-                    status.update(label="Nessun risultato trovato", state="error")
+                    st.error("Nessun risultato trovato. Riprova.")
 
-        # --- LOGICA B: PROSSIMA CANZONE (Istantaneo) ---
+        # --- CASO B: PROSSIMA CANZONE (Veloce) ---
         else:
-            generate_new_recommendation()
-            st.rerun()
+            # Anche qui il bottone è sparito, quindi non puoi cliccarlo due volte
+            with st.spinner("Generazione..."):
+                generate_new_recommendation()
+                st.rerun()
 
 # --- DISPLAY CANZONE ---
 if st.session_state.suggestion_made and st.session_state.current_track:

@@ -79,7 +79,7 @@ class SongRecommender:
             self.df_tracks['search_artist'] = self.df_tracks['artist'].apply(_make_searchable)
             self.df_tracks['search_genre'] = self.df_tracks['genres'].apply(_make_searchable)
 
-            print("⚙️ Ottimizzazione Matrice Audio...")
+            print(" Ottimizzazione Matrice Audio...")
             for c in self.audio_cols:
                 if c not in self.df_tracks.columns: self.df_tracks[c] = 0.5
             
@@ -89,9 +89,9 @@ class SongRecommender:
             norm = np.linalg.norm(self.matrix, axis=1)[:, np.newaxis]
             norm[norm == 0] = 1e-10 
             self.matrix_normalized = self.matrix / norm
-            print("✅ Motore Audio Pronto.")
+            print(" Motore Audio Pronto.")
         else:
-            print(f"⚠️ ATTENZIONE: Database non trovato.")
+            print(f" ATTENZIONE: Database non trovato.")
             self.df_tracks = pd.DataFrame()
             self.matrix_normalized = None
 
@@ -201,8 +201,8 @@ class SongRecommender:
         trusted_artists = {a for a in trusted_artists if len(a) > 1}
         safe_genres = {g for g in safe_genres if len(g) > 1}
 
-        print(f"🎯 ARTISTI FIDATI: {len(trusted_artists)} (es. {list(trusted_artists)[:3]})")
-        print(f"🎯 GENERI ATTIVI: {len(safe_genres)} (es. {list(safe_genres)[:3]})")
+        print(f" ARTISTI FIDATI: {len(trusted_artists)} (es. {list(trusted_artists)[:3]})")
+        print(f" GENERI ATTIVI: {len(safe_genres)} (es. {list(safe_genres)[:3]})")
 
         # --- VIBE ---
         if target_features:
@@ -230,11 +230,11 @@ class SongRecommender:
             bad_regex = r', (' + '|'.join([re.escape(a) for a in disliked_artists]) + r'), '
             pool = pool[~pool['search_artist'].str.contains(bad_regex, regex=True)]
 
-        print(f"🔍 Pool Netto: {len(pool)}")
+        print(f" Pool Netto: {len(pool)}")
 
         final_df = pd.DataFrame()
 
-        # --- 1. FILTRO ARTISTI (STRICT COMMA) ---
+        # --- 1. FILTRO ARTISTI  ---
         if trusted_artists:
             # Cerca ", artista, " (con virgole). Questo NON trova "emma kirkby" se cerchi "emma".
             # Usiamo un approccio a chunk per evitare regex troppo lunghe
@@ -264,9 +264,9 @@ class SongRecommender:
                 
                 gold_picks['reason_text'] = gold_picks['search_artist'].apply(lambda x: f"Tuo Artista: {get_reason(x)}")
                 final_df = pd.concat([final_df, gold_picks])
-                print(f"✅ Trovate {len(gold_picks)} canzoni dai tuoi artisti.")
+                print(f" Trovate {len(gold_picks)} canzoni dai tuoi artisti.")
 
-        # --- 2. FILTRO GENERI (STRICT COMMA) ---
+        # --- 2. FILTRO GENERI ---
         slots_left = k - len(final_df)
         if slots_left > 0 and safe_genres:
             remaining_pool = pool[~pool.index.isin(final_df.index)]
@@ -296,7 +296,7 @@ class SongRecommender:
 
                 silver_picks['reason_text'] = silver_picks['search_genre'].apply(lambda x: f"Genere: {get_gen_reason(x)}")
                 final_df = pd.concat([final_df, silver_picks])
-                print(f"✅ Trovate {len(silver_picks)} canzoni per genere.")
+                print(f" Trovate {len(silver_picks)} canzoni per genere.")
 
         # --- 3. FALLBACK AUDIO ---
         if len(final_df) < k:
