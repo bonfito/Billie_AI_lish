@@ -744,13 +744,6 @@ if q_len > 0:
 else:
     st.sidebar.info("Coda vuota (Il prossimo click calcolerà un nuovo batch)")
 
-# --- TASTO RESET ---
-if st.sidebar.button(" RESETTA CERVELLO AI", type="primary"):
-    st.session_state.recs_queue = pd.DataFrame()
-    st.session_state.session_blacklist = []
-    # Rimuove cache dati
-    st.cache_data.clear()
-    st.rerun()
 
 st.sidebar.markdown("---")
 
