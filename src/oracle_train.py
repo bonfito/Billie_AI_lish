@@ -33,7 +33,7 @@ def train_loop():
 
     #ordinamento cronologico, in modo che ai possa imparare la sequenza temporale
     if 'played_at' in df.columns:
-        df['played_at'] = pd.to_datetime(df['played_at'])
+        df['played_at'] = pd.to_datetime(df['played_at'], format='mixed')
         df = df.sort_values(by='played_at', ascending=True).reset_index(drop=True)
         print(f"Cronologia ordinata: {len(df)} brani caricati")
     else:
