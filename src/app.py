@@ -38,7 +38,7 @@ load_dotenv()
 st.set_page_config(
     page_title="Billie AI-lish", 
     layout="centered", 
-    page_icon="🎵",
+    page_icon="",
     initial_sidebar_state="expanded"
 )
 
@@ -779,8 +779,8 @@ t_genre = st.session_state.get('top_genre', 'Calcolo...')
 t_artist = st.session_state.get('top_artist', 'Calcolo...')
 
 st.sidebar.markdown(f"**Mood Attuale (Last 50):**")
-st.sidebar.caption(f"🎵 Genere: {t_genre}")
-st.sidebar.caption(f"🎤 Artista: {t_artist}")
+st.sidebar.caption(f" Genere: {t_genre}")
+st.sidebar.caption(f" Artista: {t_artist}")
 
 # indicatore coda (brani che vengono proposti all'utente)
 q_len = len(st.session_state.recs_queue) if 'recs_queue' in st.session_state else 0

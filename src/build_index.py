@@ -19,10 +19,10 @@ AUDIO_COLS = ['energy', 'valence', 'danceability', 'tempo', 'loudness',
               'speechiness', 'acousticness', 'instrumentalness', 'liveness']
 
 def build():
-    print(f"📂 Lettura dataset da: {INPUT_CSV}")
+    print(f" Lettura dataset da: {INPUT_CSV}")
     
     if not os.path.exists(INPUT_CSV):
-        print(f"❌ ERRORE: File non trovato in {INPUT_CSV}")
+        print(f" ERRORE: File non trovato in {INPUT_CSV}")
         return
 
     # Caricamento dati
@@ -39,10 +39,10 @@ def build():
         else:
             df[col] = df[col].fillna(0.0)
 
-    print(f"📊 Totale brani processati: {len(df)}")
+    print(f" Totale brani processati: {len(df)}")
 
     # --- 2. CREAZIONE INDICE FAISS ---
-    print("⚙️ Creazione Indice FAISS...")
+    print(" Creazione Indice FAISS...")
     
     # Estraiamo la matrice numpy delle feature
     vectors = np.ascontiguousarray(df[AUDIO_COLS].values.astype('float32'))

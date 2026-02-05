@@ -26,7 +26,6 @@ def _clean_str(s):
 
 def _make_searchable(s):
     """Crea una stringa ricercabile con virgole di guardia."""
-    # Input: "['Emma', 'Modà']" -> Output: ", emma, modà, "
     cleaned = _clean_str(s)
     if not cleaned or cleaned == 'nan': return ""
     # Splitta per virgola, strippa spazi e ricostruisci
@@ -62,7 +61,7 @@ class SongRecommender:
         self.feedback_cols = ['id', 'name', 'artist', 'genres', 'popularity', 'year'] + self.audio_cols
 
         # 2. Caricamento Dati
-        print(f"✅ Recommender: Caricamento DB da {self.tracks_path}")
+        print(f" Recommender: Caricamento DB da {self.tracks_path}")
         if os.path.exists(self.tracks_path):
             self.df_tracks = pd.read_csv(self.tracks_path, low_memory=False)
             
@@ -311,7 +310,7 @@ class SongRecommender:
             final_df = final_df.sample(frac=1).reset_index(drop=True).head(k)
 
         print("\n" + "="*50)
-        print("🎶 ANTEPRIMA GENERAZIONE:")
+        print(" ANTEPRIMA GENERAZIONE:")
         if not final_df.empty:
             for idx, row in final_df.iterrows():
                 print(f"{idx+1}. [{row.get('reason_text', '?')}] {row['artist']} - {row['name']}")
