@@ -350,6 +350,10 @@ def fetch_history():
     joblib.dump(scaler, SCALER_FILE)
     df_new[audio_cols] = scaler.transform(df_new[audio_cols])
 
+    #clip di sicurezza nel caso vi sia un valore di Loudness > 0dB (molto raro)
+    df_new[audio_cols] = df_new[audio_cols].clip(0,1)
+
+
     # 6. Merge
     if not df_existing.empty:
         df_updated = pd.concat([df_existing, df_new], ignore_index=True)
