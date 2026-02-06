@@ -40,7 +40,7 @@ class MusicSequenceDataset(Dataset):
         
         return x, y
 
-def create_dataloaders(csv_path, seq_length=20, batch_size=32, test_split=0.2):
+def create_dataloaders(csv_path, seq_length=20, batch_size=32, test_split=0.2, max_rows = None):
 
     #caricamento dei dati, pulizia e creazione data loader per il training
     
@@ -49,6 +49,12 @@ def create_dataloaders(csv_path, seq_length=20, batch_size=32, test_split=0.2):
     
     print(f"Database factory, caricamento:{csv_path}...")
     df = pd.read_csv(csv_path)
+
+
+    if max_rows is not None:
+        original_len = len(df)
+        df = df.tail(max_rows) #prendi le ultime n righe, le più recenti
+        print(f"Limitato a ultime {max_rows} canzoni")
 
     #ordinamento temporale (importante in modo da non predire il passato con il futuro)
     if 'played_at' in df.columns:
