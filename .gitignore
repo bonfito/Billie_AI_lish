@@ -54,3 +54,12 @@ __pycache__/
 *.pyc
 
 data/oracle_meta.json
+data/trained_models/BillieLSTM_250_best.pth
+data/trained_models/BillieLSTM_500_best.pth
+data/trained_models/BillieLSTM_50_best.pth
+data/trained_models/BillieMLP_250_best.pth
+data/trained_models/BillieMLP_500_best.pth
+data/trained_models/BillieMLP_50_best.pth
+data/trained_models/BillieTransformer_250_best.pth
+data/trained_models/BillieTransformer_500_best.pth
+data/trained_models/BillieTransformer_50_best.pth
