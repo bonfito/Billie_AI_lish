@@ -10,6 +10,7 @@ OUTPUT:
 - Tabella Markdown con MSE e Cosine Similarity
 - Grafici loss (opzionale)
 - Modelli salvati su disco
+- File JSON per la Dashboard
 """
 
 import torch
@@ -23,6 +24,7 @@ import os
 import sys
 import time
 from collections import defaultdict
+import json
 
 # Import moduli locali
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -459,6 +461,43 @@ def main():
     # ═══════════════════════════════════════════════════════════════════════
     
     print_multi_dataset_table(all_experiments)
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # SALVATAGGIO DATI JSON PER DASHBOARD
+    # ═══════════════════════════════════════════════════════════════════════
+    
+    json_output_path = "dashboard_data.json"
+    dashboard_data = []
+
+    for exp in all_experiments:
+        # Formattazione history per la dashboard
+        formatted_history = []
+        train_hist = exp['history']['train_loss']
+        test_hist = exp['history']['test_loss']
+        
+        for i in range(len(train_hist)):
+            formatted_history.append({
+                "Epoch": i + 1,
+                "Train Loss": float(train_hist[i]), # Converte np.float in float
+                "Test Loss": float(test_hist[i])
+            })
+
+        dashboard_data.append({
+            "Dataset": f"{exp['dataset_size']} Canzoni",
+            "Model": exp['model_base_name'],
+            "MSE": float(exp['mse']),
+            "Cosine": float(exp['cosine']),
+            "Epochs": len(train_hist),
+            "History": formatted_history
+        })
+
+    try:
+        with open(json_output_path, "w") as f:
+            json.dump(dashboard_data, f, indent=4)
+        print(f"\n💾 Dati salvati correttamente in: {os.path.abspath(json_output_path)}")
+        print("👉 Ora puoi eseguire: streamlit run dashboard.py")
+    except Exception as e:
+        print(f"\n❌ Errore nel salvataggio JSON: {e}")
     
     print("\n" + "="*70)
     print("✅ ESPERIMENTO COMPLETATO")

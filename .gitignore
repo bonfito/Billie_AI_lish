@@ -63,3 +63,4 @@ data/trained_models/BillieMLP_50_best.pth
 data/trained_models/BillieTransformer_250_best.pth
 data/trained_models/BillieTransformer_500_best.pth
 data/trained_models/BillieTransformer_50_best.pth
+dashboard_data.json
