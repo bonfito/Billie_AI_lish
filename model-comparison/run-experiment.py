@@ -1,8 +1,10 @@
 """
-run_experiment.py
+run_experiment.py - VERSIONE CON RIPRODUCIBILITÀ
 
 Script per confrontare le performance di MLP, LSTM e Transformer
 sulla predizione di sequenze musicali.
+
+NOVITÀ: Seed fissi per risultati riproducibili!
 
 OUTPUT:
 - Tabella Markdown con MSE e Cosine Similarity
@@ -16,6 +18,7 @@ import torch.optim as optim
 from torch.nn.functional import cosine_similarity
 
 import numpy as np
+import random
 import os
 import sys
 import time
@@ -30,7 +33,47 @@ from data_factory import create_dataloaders
 from architectures import BillieMLP, BillieLSTM, BillieTransformer
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# FUNZIONE: Fissa Seed per Riproducibilità
+# ═══════════════════════════════════════════════════════════════════════════
+
+def set_seed(seed=42):
+    """
+    Fissa tutti i seed random per garantire risultati riproducibili.
+    
+    IMPORTANTE: Questa funzione VA CHIAMATA PRIMA di creare modelli o dataset!
+    
+    Args:
+        seed (int): Valore del seed (default: 42)
+    
+    Cosa fissa:
+    - random (Python standard library)
+    - numpy.random
+    - torch.manual_seed (CPU)
+    - torch.cuda.manual_seed (GPU)
+    - torch.backends.cudnn (operazioni CUDA)
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)  # Per multi-GPU
+        
+    # Rende le operazioni CUDA deterministiche
+    # NOTA: Può rallentare leggermente il training (~5-10%)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    
+    print(f"🎲 Seed fissato a: {seed}")
+    print("   ✅ Risultati saranno identici ad ogni esecuzione")
+    print()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # CONFIGURAZIONE GLOBALE
+# ═══════════════════════════════════════════════════════════════════════════
 
 # Percorsi
 DATA_DIR = os.path.join(current_dir, '..', 'data')
@@ -40,102 +83,87 @@ MODELS_DIR = os.path.join(DATA_DIR, 'trained_models')
 # Hyperparameters
 CONFIG = {
     'seq_length': 20,      # Finestra temporale (20 canzoni → predici 21esima)
-    'batch_size': 16,      # Ridotto per dataset piccoli (era 32)
+    'batch_size': 16,      # Ridotto per dataset piccoli
     'test_split': 0.2,     # 20% per test
     'learning_rate': 0.001,
     'epochs': 50,          # Numero massimo di epoche
-    'patience': 10,        # Early stopping (ferma se no improvement per N epoche)
-    'device': 'cuda' if torch.cuda.is_available() else 'cpu'
+    'patience': 10,        # Early stopping
+    'device': 'cuda' if torch.cuda.is_available() else 'cpu',
+    'seed': 42             # 🎲 SEED FISSO (cambialo se vuoi risultati diversi)
 }
 
-# Crea cartella modelli se non esiste
+# Crea cartella per modelli salvati
 os.makedirs(MODELS_DIR, exist_ok=True)
 
 
+# ═══════════════════════════════════════════════════════════════════════════
 # FUNZIONE: Training di un Modello
-
+# ═══════════════════════════════════════════════════════════════════════════
 
 def train_model(model, train_loader, test_loader, model_name, config):
     """
     Addestra un singolo modello e valuta le performance.
-    
-    Args:
-        model: Modello PyTorch (BillieMLP/LSTM/Transformer)
-        train_loader: DataLoader per training
-        test_loader: DataLoader per test
-        model_name: Nome del modello (per logging)
-        config: Dizionario con hyperparameters
-    
-    Returns:
-        dict: Contiene MSE, Cosine Similarity, Loss history
     """
     
     print(f"\n{'='*70}")
-    print(f" ADDESTRAMENTO: {model_name}")
+    print(f"🚀 ADDESTRAMENTO: {model_name}")
     print(f"{'='*70}")
     
     # Setup
     device = config['device']
     model = model.to(device)
     
-    # Loss Function: Mean Squared Error
-    # Misura quanto i valori predetti si discostano dai target
+    # Loss Function
     criterion = nn.MSELoss()
     
-    # Optimizer: Adam (adaptive learning rate)
+    # Optimizer
     optimizer = optim.Adam(model.parameters(), lr=config['learning_rate'])
     
-    # Early Stopping: Variabili per monitorare miglioramenti
+    # Early Stopping
     best_test_loss = float('inf')
     patience_counter = 0
     
-    # Storia delle loss (per grafici opzionali)
+    # Storia delle loss
     history = {
         'train_loss': [],
         'test_loss': []
     }
     
+    # ───────────────────────────────────────────────────────────────────────
     # TRAINING LOOP
+    # ───────────────────────────────────────────────────────────────────────
     
     for epoch in range(config['epochs']):
         # FASE 1: TRAINING
-        
-        model.train()  # Abilita dropout, batch norm, ecc.
+        model.train()
         train_losses = []
         
         for batch_x, batch_y in train_loader:
-            # Sposta dati su GPU (se disponibile)
-            batch_x = batch_x.to(device)  # (batch, seq, features)
-            batch_y = batch_y.to(device)  # (batch, features)
+            batch_x = batch_x.to(device)
+            batch_y = batch_y.to(device)
             
-            # STEP 1: Forward Pass
-            predictions = model(batch_x)  # (batch, features)
-            
-            # STEP 2: Calcola Loss
+            # Forward Pass
+            predictions = model(batch_x)
             loss = criterion(predictions, batch_y)
             
-            # STEP 3: Backward Pass (Backpropagation)
-            optimizer.zero_grad()  # Resetta gradienti (importante!)
-            loss.backward()        # Calcola gradienti
+            # Backward Pass
+            optimizer.zero_grad()
+            loss.backward()
             
-            # Gradient Clipping (previene gradienti esplosivi)
+            # Gradient Clipping (evita esplosione gradienti)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             
-            optimizer.step()       # Aggiorna pesi
-            
-            # Salva loss (detach per non mantenere computation graph)
+            optimizer.step()
             train_losses.append(loss.item())
         
-        # Media loss sull'epoca
         avg_train_loss = np.mean(train_losses)
         history['train_loss'].append(avg_train_loss)
         
-        # FASE 2: VALIDATION (Test Set)
-        
-        model.eval()  # Disabilita dropout, ecc.
+        # FASE 2: VALIDATION
+        model.eval()
         test_losses = []
         
-        with torch.no_grad():  # Disabilita gradient computation (più veloce)
+        with torch.no_grad():
             for batch_x, batch_y in test_loader:
                 batch_x = batch_x.to(device)
                 batch_y = batch_y.to(device)
@@ -148,48 +176,42 @@ def train_model(model, train_loader, test_loader, model_name, config):
         history['test_loss'].append(avg_test_loss)
         
         # LOGGING
-        
         print(f"Epoca {epoch+1:3d}/{config['epochs']} | "
               f"Train Loss: {avg_train_loss:.6f} | "
               f"Test Loss: {avg_test_loss:.6f}", end="")
         
         # EARLY STOPPING
-        
-        
         if avg_test_loss < best_test_loss:
-            # Miglioramento! Salva modello
             best_test_loss = avg_test_loss
             patience_counter = 0
             
             # Salva checkpoint
             torch.save(model.state_dict(), 
                       os.path.join(MODELS_DIR, f'{model_name}_best.pth'))
-            print("  [BEST]")
+            print(" ✅ [BEST]")
         else:
-            # Nessun miglioramento
             patience_counter += 1
-            print(f"  [Patience: {patience_counter}/{config['patience']}]")
+            print(f" ⏳ [Patience: {patience_counter}/{config['patience']}]")
             
-            # Stop se nessun miglioramento per troppo tempo
             if patience_counter >= config['patience']:
-                print(f"\n Early stopping attivato dopo {epoch+1} epoche")
+                print(f"\n⚠️ Early stopping attivato dopo {epoch+1} epoche")
                 break
     
-    # CARICA MIGLIOR MODELLO
-    
-    model.load_state_dict(
-        torch.load(os.path.join(MODELS_DIR, f'{model_name}_best.pth'))
-    )
-    
-    # 
+    # ───────────────────────────────────────────────────────────────────────
     # VALUTAZIONE FINALE
+    # ───────────────────────────────────────────────────────────────────────
     
-    print(f"\n Valutazione finale su Test Set...")
+    # Ricarica il miglior modello
+    model.load_state_dict(torch.load(
+        os.path.join(MODELS_DIR, f'{model_name}_best.pth'),
+        weights_only=True
+    ))
+    
+    print(f"\n📊 Valutazione finale su Test Set...")
     
     model.eval()
     all_predictions = []
     all_targets = []
-    test_losses = []
     
     with torch.no_grad():
         for batch_x, batch_y in test_loader:
@@ -197,317 +219,251 @@ def train_model(model, train_loader, test_loader, model_name, config):
             batch_y = batch_y.to(device)
             
             predictions = model(batch_x)
-            loss = criterion(predictions, batch_y)
             
-            # Accumula per metriche finali
             all_predictions.append(predictions.cpu())
             all_targets.append(batch_y.cpu())
-            test_losses.append(loss.item())
     
     # Concatena tutti i batch
-    all_predictions = torch.cat(all_predictions, dim=0)  # (N_test, 9)
-    all_targets = torch.cat(all_targets, dim=0)          # (N_test, 9)
+    all_predictions = torch.cat(all_predictions, dim=0)
+    all_targets = torch.cat(all_targets, dim=0)
     
-    # METRICA 1: MSE (Mean Squared Error)
+    # Calcola metriche
+    mse = nn.MSELoss()(all_predictions, all_targets).item()
     
-    final_mse = np.mean(test_losses)
+    # Cosine Similarity (media su tutti gli esempi)
+    cosine_sims = cosine_similarity(all_predictions, all_targets, dim=1)
+    avg_cosine = cosine_sims.mean().item()
     
-    # METRICA 2: COSINE SIMILARITY
-    # Misura quanto l'"angolo" del vettore è corretto
-    # 1.0 = direzione perfetta, 0.0 = perpendicolare, -1.0 = opposto
+    print(f" ✅ MSE:               {mse:.6f}")
+    print(f" ✅ Cosine Similarity: {avg_cosine:.4f}")
     
-    cosine_sims = []
-    for i in range(len(all_predictions)):
-        # Calcola similarità tra vettore predetto e target
-        sim = cosine_similarity(
-            all_predictions[i].unsqueeze(0),  # (1, 9)
-            all_targets[i].unsqueeze(0),      # (1, 9)
-            dim=1
-        ).item()
-        cosine_sims.append(sim)
-    
-    avg_cosine = np.mean(cosine_sims)
-    
-    # RISULTATI
-    
-    
-    results = {
+    return {
         'model_name': model_name,
-        'mse': final_mse,
-        'cosine_similarity': avg_cosine,
+        'mse': mse,
+        'cosine': avg_cosine,
         'history': history,
-        'best_epoch': len(history['train_loss']) - config['patience']
+        'best_epoch': epoch + 1 - patience_counter
     }
-    
-    print(f" MSE:               {final_mse:.6f}")
-    print(f" Cosine Similarity: {avg_cosine:.4f}")
-    
-    return results
 
 
-# FUNZIONE: Stampa Tabella Risultati
+# ═══════════════════════════════════════════════════════════════════════════
+# FUNZIONE: Stampa Tabella Comparativa
+# ═══════════════════════════════════════════════════════════════════════════
 
-def print_results_table(results_list):
+def print_comparison_table(results_list, dataset_size):
     """
-    Stampa tabella comparativa in formato Markdown.
+    Stampa tabella Markdown con risultati.
+    """
     
-    Args:
-        results_list: Lista di dizionari con risultati dei modelli
+    print(f"\n📊 RISULTATI per Dataset {dataset_size} canzoni:\n")
+    
+    print("="*70)
+    print("TABELLA COMPARATIVA FINALE")
+    print("="*70)
+    print()
+    
+    # Header
+    print(f"| {'Modello':<18} | {'MSE':<8} | {'Cosine Similarity':<17} | {'Parametri':<10} |")
+    print(f"|{'-'*20}|{'-'*10}|{'-'*19}|{'-'*12}|")
+    
+    # Righe dati
+    for res in results_list:
+        print(f"| {res['model_name']:<18} | {res['mse']:<8.6f} | {res['cosine']:<17.4f} | {'N/A':<10} |")
+    
+    print()
+    
+    # Trova vincitori
+    best_mse_model = min(results_list, key=lambda x: x['mse'])
+    best_cosine_model = max(results_list, key=lambda x: x['cosine'])
+    
+    print("VINCITORI:")
+    print(f"   - Miglior MSE:               {best_mse_model['model_name']} ({best_mse_model['mse']:.6f})")
+    print(f"   - Miglior Cosine Similarity: {best_cosine_model['model_name']} ({best_cosine_model['cosine']:.4f})")
+    print()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FUNZIONE: Stampa Tabella Multi-Dataset
+# ═══════════════════════════════════════════════════════════════════════════
+
+def print_multi_dataset_table(all_experiments):
+    """
+    Stampa tabella comparativa su tutti i dataset testati.
     """
     
     print("\n" + "="*70)
-    print("TABELLA COMPARATIVA FINALE")
-    print("="*70 + "\n")
+    print("📊 TABELLA COMPARATIVA FINALE - TUTTI I DATASET")
+    print("="*70)
+    print()
     
     # Header
-    print("| Modello            | MSE      | Cosine Similarity | Parametri  |")
-    print("|--------------------|----------|-------------------|------------|")
+    print(f"| {'Dataset Size':<12} | {'Modello':<15} | {'MSE':<8} | {'Cosine Sim':<11} | {'Train Samples':<14} |")
+    print(f"|{'-'*14}|{'-'*17}|{'-'*10}|{'-'*13}|{'-'*16}|")
     
-    # Rows
-    for res in results_list:
-        model_name = res['model_name']
-        mse = res['mse']
-        cosine = res['cosine_similarity']
+    # Organizza per dataset size
+    by_size = {}
+    for exp in all_experiments:
+        size = exp['dataset_size']
+        if size not in by_size:
+            by_size[size] = []
+        by_size[size].append(exp)
+    
+    # Stampa
+    for size in sorted(by_size.keys()):
+        experiments = by_size[size]
         
-        # Conta parametri (dovremmo passarli, ma per ora placeholder)
-        # In un'implementazione completa, li salveremmo nei risultati
-        params = "N/A"
+        for i, exp in enumerate(experiments):
+            size_str = str(size) if i == 0 else ""
+            model_str = exp['model_base_name']
+            
+            print(f"| {size_str:<12} | {model_str:<15} | {exp['mse']:<8.6f} | {exp['cosine']:<11.4f} | {exp['train_samples']:<14} |")
         
-        print(f"| {model_name:18} | {mse:.6f} | {cosine:.4f}          | {params:10} |")
+        # Separatore tra dataset
+        print(f"|{'-'*14}|{'-'*17}|{'-'*10}|{'-'*13}|{'-'*16}|")
     
-    print()
+    # Vincitori per ogni dataset
+    print("\n🏆 VINCITORI PER DATASET SIZE:\n")
     
-    # ANALISI VINCITORE
-    
-    best_mse = min(results_list, key=lambda x: x['mse'])
-    best_cosine = max(results_list, key=lambda x: x['cosine_similarity'])
-    
-    print("VINCITORI:")
-    print(f"   - Miglior MSE:               {best_mse['model_name']} ({best_mse['mse']:.6f})")
-    print(f"   - Miglior Cosine Similarity: {best_cosine['model_name']} ({best_cosine['cosine_similarity']:.4f})")
-    print()
+    for size in sorted(by_size.keys()):
+        experiments = by_size[size]
+        best_mse = min(experiments, key=lambda x: x['mse'])
+        best_cosine = max(experiments, key=lambda x: x['cosine'])
+        
+        print(f"Dataset {size:3d} canzoni:")
+        print(f"  ├─ Miglior MSE:    {best_mse['model_base_name']:<20} ({best_mse['mse']:.6f})")
+        print(f"  └─ Miglior Cosine: {best_cosine['model_base_name']:<20} ({best_cosine['cosine']:.4f})")
+        print()
 
 
-# FUNZIONE MAIN
+# ═══════════════════════════════════════════════════════════════════════════
+# MAIN: Esecuzione Esperimento
+# ═══════════════════════════════════════════════════════════════════════════
+
 def main():
     """
-    Pipeline completa dell'esperimento CON 3 DATASET DI DIMENSIONI DIVERSE.
+    Funzione principale: esegue esperimento su 3 dataset sizes.
     """
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # 🎲 PASSO 1: FISSA IL SEED (CRUCIALE!)
+    # ═══════════════════════════════════════════════════════════════════════
+    
+    set_seed(CONFIG['seed'])
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # INTESTAZIONE
+    # ═══════════════════════════════════════════════════════════════════════
     
     print("\n" + "="*70)
     print("🎵 BILLIE AI-LISH - ESPERIMENTO COMPARATIVO MULTI-DATASET")
     print("="*70)
+    print()
     
-    # ═══════════════════════════════════════════════════════════════════
-    # CONFIGURAZIONE: 3 dimensioni di dataset da testare
-    # ═══════════════════════════════════════════════════════════════════
-    
+    # Dataset sizes da testare
     DATASET_SIZES = [50, 250, 500]
     
-    # ═══════════════════════════════════════════════════════════════════
-    # LOOP PRINCIPALE: Un esperimento per ogni dimensione
-    # ═══════════════════════════════════════════════════════════════════
+    all_experiments = []
     
-    all_experiments = []  # Salverà tutti i risultati
+    # ═══════════════════════════════════════════════════════════════════════
+    # LOOP SU DATASET SIZES
+    # ═══════════════════════════════════════════════════════════════════════
     
     for dataset_size in DATASET_SIZES:
         
         print("\n" + "🔷"*70)
         print(f"📊 ESPERIMENTO CON ULTIME {dataset_size} CANZONI")
-        print("🔷"*70)
+        print("🔷"*70 + "\n")
         
-        # ───────────────────────────────────────────────────────────────
-        # STEP 1: CARICAMENTO DATI (con limite)
-        # ───────────────────────────────────────────────────────────────
+        # ───────────────────────────────────────────────────────────────────
+        # STEP 1: Caricamento Dati
+        # ───────────────────────────────────────────────────────────────────
         
-        print(f"\n📂 STEP 1: Caricamento ultime {dataset_size} canzoni")
+        print(f"📂 STEP 1: Caricamento ultime {dataset_size} canzoni")
         print("-" * 70)
         
-        try:
-            train_loader, test_loader, n_features = create_dataloaders(
-                csv_path=HISTORY_PATH,
-                seq_length=CONFIG['seq_length'],
-                batch_size=CONFIG['batch_size'],
-                test_split=CONFIG['test_split'],
-                max_rows=dataset_size  # 🔥 NUOVO PARAMETRO
-            )
-            
-            print(f"✅ Features per timestep: {n_features}")
-            print(f"✅ Device: {CONFIG['device'].upper()}")
-            
-            # Verifica dataset non vuoto
-            if len(train_loader) == 0:
-                print(f"\n⚠️ SKIP: Dataset con {dataset_size} canzoni troppo piccolo per seq_length={CONFIG['seq_length']}")
-                continue
-            if len(test_loader) == 0:
-                print(f"\n⚠️ SKIP: Test set vuoto con {dataset_size} canzoni")
-                continue
-                
-        except FileNotFoundError:
-            print(f"\n❌ ERRORE: File {HISTORY_PATH} non trovato!")
-            return
-        except ValueError as e:
-            print(f"\n❌ ERRORE con dataset {dataset_size}: {e}")
-            continue
-        except Exception as e:
-            print(f"\n❌ ERRORE imprevisto con dataset {dataset_size}: {e}")
-            continue
+        train_loader, test_loader, n_features = create_dataloaders(
+            csv_path=HISTORY_PATH,
+            seq_length=CONFIG['seq_length'],
+            batch_size=CONFIG['batch_size'],
+            test_split=CONFIG['test_split'],
+            max_rows=dataset_size
+        )
         
-        # ───────────────────────────────────────────────────────────────
-        # STEP 2: INIZIALIZZAZIONE MODELLI
-        # ───────────────────────────────────────────────────────────────
+        print(f"✅ Features per timestep: {n_features}")
+        print(f"✅ Device: {CONFIG['device']}")
+        print()
         
-        print(f"\n🧠 STEP 2: Inizializzazione Modelli")
+        # Train samples (per statistiche)
+        train_samples = len(train_loader.dataset)
+        
+        # ───────────────────────────────────────────────────────────────────
+        # STEP 2: Inizializzazione Modelli
+        # ───────────────────────────────────────────────────────────────────
+        
+        print("🧠 STEP 2: Inizializzazione Modelli")
         print("-" * 70)
+        
+        # 🎲 IMPORTANTE: Fissa seed PRIMA di creare ogni modello
+        # Così i pesi iniziali sono identici ad ogni esecuzione
+        set_seed(CONFIG['seed'])
         
         models = {
-            'BillieMLP': BillieMLP(
-                seq_length=CONFIG['seq_length'],
-                input_size=n_features,
-                hidden_size=256
-            ),
-            'BillieLSTM': BillieLSTM(
-                input_size=n_features,
-                hidden_size=128,
-                num_layers=2
-            ),
-            'BillieTransformer': BillieTransformer(
-                input_size=n_features,
-                d_model=64,
-                nhead=4,
-                num_layers=2
-            )
+            'BillieMLP': BillieMLP(seq_length=CONFIG['seq_length'], input_size=n_features),
+            'BillieLSTM': BillieLSTM(input_size=n_features),
+            'BillieTransformer': BillieTransformer(input_size=n_features)
         }
         
         for name, model in models.items():
-            n_params = sum(p.numel() for p in model.parameters())
-            print(f"✅ {name:20} {n_params:>10,} parametri")
+            params = sum(p.numel() for p in model.parameters())
+            print(f"✅ {name:<20} {params:>10,} parametri")
         
-        # ───────────────────────────────────────────────────────────────
-        # STEP 3: TRAINING
-        # ───────────────────────────────────────────────────────────────
+        print()
         
-        print(f"\n🚀 STEP 3: Addestramento Modelli (Dataset: {dataset_size} canzoni)")
+        # ───────────────────────────────────────────────────────────────────
+        # STEP 3: Training
+        # ───────────────────────────────────────────────────────────────────
+        
+        print(f"🚀 STEP 3: Addestramento Modelli (Dataset: {dataset_size} canzoni)")
         print("-" * 70)
         
-        experiment_results = []
+        results_for_this_dataset = []
         
         for model_name, model in models.items():
-            try:
-                results = train_model(
-                    model=model,
-                    train_loader=train_loader,
-                    test_loader=test_loader,
-                    model_name=f"{model_name}_{dataset_size}",  # Nome unico
-                    config=CONFIG
-                )
-                
-                # Aggiungi info sul dataset size
-                results['dataset_size'] = dataset_size
-                results['model_base_name'] = model_name
-                
-                experiment_results.append(results)
-                
-            except KeyboardInterrupt:
-                print(f"\n⚠️ Training interrotto dall'utente")
-                return
-            except Exception as e:
-                print(f"\n❌ ERRORE durante training di {model_name}: {e}")
-                continue
+            # 🎲 Fissa seed prima di ogni training per consistenza
+            set_seed(CONFIG['seed'])
+            
+            results = train_model(
+                model=model,
+                train_loader=train_loader,
+                test_loader=test_loader,
+                model_name=f"{model_name}_{dataset_size}",
+                config=CONFIG
+            )
+            
+            # Aggiungi info dataset
+            results['dataset_size'] = dataset_size
+            results['model_base_name'] = model_name
+            results['train_samples'] = train_samples
+            
+            results_for_this_dataset.append(results)
+            all_experiments.append(results)
         
-        # ───────────────────────────────────────────────────────────────
-        # STEP 4: RISULTATI PER QUESTO DATASET
-        # ───────────────────────────────────────────────────────────────
+        # ───────────────────────────────────────────────────────────────────
+        # Tabella risultati per questo dataset
+        # ───────────────────────────────────────────────────────────────────
         
-        if experiment_results:
-            print(f"\n📊 RISULTATI per Dataset {dataset_size} canzoni:")
-            print_results_table(experiment_results)
-            all_experiments.extend(experiment_results)
-        else:
-            print(f"\n⚠️ Nessun risultato per dataset {dataset_size}")
+        print_comparison_table(results_for_this_dataset, dataset_size)
     
-    # ═══════════════════════════════════════════════════════════════════
-    # STEP 5: TABELLA COMPARATIVA FINALE (TUTTI I DATASET)
-    # ═══════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
+    # TABELLA FINALE MULTI-DATASET
+    # ═══════════════════════════════════════════════════════════════════════
     
-    if all_experiments:
-        print("\n" + "="*70)
-        print("📊 TABELLA COMPARATIVA FINALE - TUTTI I DATASET")
-        print("="*70 + "\n")
-        
-        print_comparison_across_datasets(all_experiments)
+    print_multi_dataset_table(all_experiments)
     
     print("\n" + "="*70)
     print("✅ ESPERIMENTO COMPLETATO")
-    print("="*70 + "\n")
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# NUOVA FUNZIONE: Confronto tra Dataset
-# ═══════════════════════════════════════════════════════════════════════
-
-def print_comparison_across_datasets(all_results):
-    """
-    Stampa tabella comparativa organizzata per dataset size.
-    
-    Args:
-        all_results: Lista di tutti i risultati (da tutti i dataset)
-    """
-    
-    # Organizza per dataset size
-    by_size = {}
-    for res in all_results:
-        size = res['dataset_size']
-        if size not in by_size:
-            by_size[size] = []
-        by_size[size].append(res)
-    
-    # Header
-    print("| Dataset Size | Modello       | MSE      | Cosine Sim | Train Samples |")
-    print("|--------------|---------------|----------|------------|---------------|")
-    
-    # Righe organizzate per dataset size
-    for size in sorted(by_size.keys()):
-        results = by_size[size]
-        
-        for i, res in enumerate(results):
-            model_name = res['model_base_name']
-            mse = res['mse']
-            cosine = res['cosine_similarity']
-            
-            # Stima train samples (approssimativa)
-            train_samples = int(size * 0.8 - CONFIG['seq_length'])
-            
-            # Prima riga di ogni gruppo mostra dataset size
-            size_col = f"{size:4d}" if i == 0 else "    "
-            
-            print(f"| {size_col:12} | {model_name:13} | {mse:.6f} | {cosine:.4f}     | {train_samples:13d} |")
-        
-        # Separatore tra dataset
-        if size != max(by_size.keys()):
-            print("|--------------|---------------|----------|------------|---------------|")
-    
+    print("="*70)
     print()
-    
-    # ───────────────────────────────────────────────────────────────────
-    # ANALISI: Miglior modello per ogni dataset size
-    # ───────────────────────────────────────────────────────────────────
-    
-    print("🏆 VINCITORI PER DATASET SIZE:\n")
-    
-    for size in sorted(by_size.keys()):
-        results = by_size[size]
-        
-        best_mse = min(results, key=lambda x: x['mse'])
-        best_cosine = max(results, key=lambda x: x['cosine_similarity'])
-        
-        print(f"Dataset {size:3d} canzoni:")
-        print(f"  ├─ Miglior MSE:    {best_mse['model_base_name']:15} ({best_mse['mse']:.6f})")
-        print(f"  └─ Miglior Cosine: {best_cosine['model_base_name']:15} ({best_cosine['cosine_similarity']:.4f})")
-        print()
-
-
-# ENTRY POINT
 
 
 if __name__ == "__main__":
