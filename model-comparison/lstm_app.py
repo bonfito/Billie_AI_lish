@@ -31,7 +31,7 @@ DB_PATH = os.path.join(DATA_DIR, 'tracks_processed.csv')
 
 # Palette Colori Sobri (Stile "Architectural")
 SOBER_COLORS = {
-    "LiveEngine": "#D4AF37",       # Oro Antico (per il live)
+    "LiveEngine": "#D4AF37",       # Oro Antico 
     "Background": "#1E1E1E",       # Sfondo Scuro
     "Text": "#E0E0E0"              # Testo Chiaro
 }
