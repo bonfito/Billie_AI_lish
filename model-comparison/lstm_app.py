@@ -164,7 +164,7 @@ def render_vector_analysis(ideal_vector, real_vector, title, color):
 # 4. MAIN APPLICATION LOGIC
 # ==============================================================================
 def main():
-    st.title("🎧 Billie AI-lish: Live Music Engine")
+    st.title(" Billie AI-lish: Live Music Engine")
     st.caption("Sistema di raccomandazione musicale in tempo reale basato su architettura LSTM.")
     
     # Inizializza l'app logica
@@ -190,14 +190,14 @@ def main():
             st.info("Nessuno storico trovato.")
 
     # Pulsante Azione
-    if st.button("Genera Playlist", type="primary"):
+    if st.button("Genera Canzoni", type="primary"):
         results = app_logic.run_live_recommendation(k=k_recs)
         
         if results:
             recs, pred_vector = results
             
             st.divider()
-            st.subheader(f"Playlist Generata ({len(recs)} brani)")
+            st.subheader(f"Canzoni Generata ({len(recs)} brani)")
             
             # Griglia dinamica per le card (3 per riga)
             grid_cols = st.columns(3)
