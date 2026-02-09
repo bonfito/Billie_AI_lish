@@ -79,7 +79,7 @@ if not df_summary.empty:
     col1, col2, col3 = st.columns(3)
     col1.metric("Miglior MSE Assoluto", f"{best_model_mse['MSE (Test)']:.5f}", f"{best_model_mse['Model']} ({best_model_mse['Dataset']})", delta_color="inverse")
     col2.metric("Miglior Cosine Assoluto", f"{best_model_cos['Cosine Similarity']:.4f}", f"{best_model_cos['Model']} ({best_model_cos['Dataset']})")
-    col3.metric("Totale Esperimenti", len(df_summary))
+    
 
 st.divider()
 
@@ -100,10 +100,10 @@ for i, ds_name in enumerate(datasets):
         
         # Formattazione condizionale
         st.dataframe(
-            subset.style.highlight_min(subset=["MSE (Test)"], color="green")
-                        .highlight_max(subset=["Cosine Similarity"], color="green")
+            subset.style.highlight_min(subset=["MSE (Test)"], color="#1DB954")
+                        .highlight_max(subset=["Cosine Similarity"], color="#1DB954")
                         .format({"MSE (Test)": "{:.6f}", "Cosine Similarity": "{:.4f}"}),
-            use_container_width=True,
+            width='stretch',
             hide_index=True
         )
         
@@ -125,14 +125,20 @@ for i, ds_name in enumerate(datasets):
                     st.markdown(f"####  {model}")
                     
                     # GRAFICO LOSS
-                    fig = px.line(df_hist, x="Epoch", y=["Train Loss", "Test Loss"], 
-                                  markers=True, height=300)
+                    fig = px.line(
+                        df_hist,
+                        x="Epoch",
+                        y=["Train Loss", "Test Loss"],markers=True,
+                        height=300,
+                        color_discrete_sequence=["#A5D6A7", "#1DB954"]
+                        )
+                    
                     fig.update_layout(
                         legend=dict(orientation="h", y=1.1, title=None),
                         margin=dict(l=0, r=0, t=20, b=0),
                         yaxis_title="Loss (MSE)"
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
                     
                     # TABELLA COMPLETA (Altezza Dinamica)
                     # Calcolo approssimativo: 35px per header + 35px per riga
@@ -151,64 +157,8 @@ for i, ds_name in enumerate(datasets):
                     st.dataframe(
                         df_hist.style
                             .format(format_dict)
-                            .highlight_min(subset=["Test Loss"], color="green", axis=0), 
-                        use_container_width=True, 
+                            .highlight_min(subset=["Test Loss"], color="#1DB954", axis=0), 
+                        width='stretch', 
                         height=table_height,
                         hide_index=True
                     )
-# ==============================================================================
-# 4. FLASHCARDS SUGGERIMENTI MUSICALI (Render Corretto)
-# ==============================================================================
-st.divider()
-st.subheader("🎵 Consigli d'ascolto per architettura")
-
-DB_PATH = os.path.join("data", "tracks_processed.csv")
-
-# 1. Verifica se il database esiste e se ci sono risultati di training
-if os.path.exists(DB_PATH) and not df_summary.empty:
-    df_db = pd.read_csv(DB_PATH)
-    
-    # Prendiamo i dati del dataset più recente
-    latest_ds = datasets[-1]
-    subset_latest = df_summary[df_summary["Dataset"] == latest_ds]
-    card_cols = st.columns(len(subset_latest))
-
-    # Palette colori sobri
-    SOBER_COLORS = {
-        "BillieMLP": "#555555",
-        "BillieLSTM": "#4A6572",
-        "BillieTransformer": "#34495E"
-    }
-
-    # IL CICLO FOR DEVE ESSERE INDENTATO DENTRO L'IF
-    for idx, row in enumerate(subset_latest.itertuples()):
-        model_name = row.Model
-        suggestion = df_db.sample(1).iloc[0]
-        border_color = SOBER_COLORS.get(model_name, "#333333")
-        
-        with card_cols[idx]:
-            # Costruiamo la stringa HTML
-            html_card = f"""<div style="background-color: #1E1E1E; color: #E0E0E0; padding: 20px; border-radius: 8px; border-top: 5px solid {border_color}; text-align: left; height: 320px; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 4px 6px rgba(0,0,0,0.3); font-family: sans-serif;">
-<div>
-<p style="margin:0; font-size: 0.8em; text-transform: uppercase; letter-spacing: 1px; color: {border_color}; font-weight: bold;">{model_name}</p>
-<h2 style="margin: 15px 0 5px 0; font-size: 1.3em; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; color: #FFFFFF;">{suggestion['name']}</h2>
-<p style="margin:0; font-size: 0.95em; opacity: 0.7;">{suggestion['artist']}</p>
-</div>
-<div style="border-top: 1px solid #333; padding-top: 15px;">
-<div style="display: flex; justify-content: space-between; align-items: center;">
-<span style="font-size: 0.8em; opacity: 0.6;">Confidence Score</span>
-<span style="font-size: 0.9em; font-weight: bold; color: #BB86FC;">{np.random.uniform(94, 98):.1f}%</span>
-</div>
-<p style="margin: 5px 0 0 0; font-size: 0.7em; opacity: 0.3;">Basato su {latest_ds}</p>
-</div>
-</div>"""
-            # Rendering HTML
-            st.write(html_card, unsafe_allow_html=True)
-else:
-    # Questo viene eseguito solo se il file non esiste o df_summary è vuoto
-    st.info("Esegui il training per visualizzare i suggerimenti.")
-
-# Footer (Fuori dall'if/else)
-st.markdown("---")
-if st.button("Ricarica Dati"):
-    st.rerun()
