@@ -1,17 +1,3 @@
-"""
-run_experiment.py - VERSIONE CON RIPRODUCIBILITÀ
-
-Script per confrontare le performance di MLP, LSTM e Transformer
-sulla predizione di sequenze musicali.
-
-NOVITÀ: Seed fissi per risultati riproducibili!
-
-OUTPUT:
-- Tabella Markdown con MSE e Cosine Similarity
-- Grafici loss (opzionale)
-- Modelli salvati su disco
-- File JSON per la Dashboard
-"""
 
 import torch
 import torch.nn as nn
@@ -35,26 +21,9 @@ from data_factory import create_dataloaders
 from architectures import BillieMLP, BillieLSTM, BillieTransformer
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# FUNZIONE: Fissa Seed per Riproducibilità
-# ═══════════════════════════════════════════════════════════════════════════
 
+# fissa seed per fare in modo che il training non cambi sempre i suoi risultati
 def set_seed(seed=42):
-    """
-    Fissa tutti i seed random per garantire risultati riproducibili.
-    
-    IMPORTANTE: Questa funzione VA CHIAMATA PRIMA di creare modelli o dataset!
-    
-    Args:
-        seed (int): Valore del seed (default: 42)
-    
-    Cosa fissa:
-    - random (Python standard library)
-    - numpy.random
-    - torch.manual_seed (CPU)
-    - torch.cuda.manual_seed (GPU)
-    - torch.backends.cudnn (operazioni CUDA)
-    """
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -64,19 +33,16 @@ def set_seed(seed=42):
         torch.cuda.manual_seed_all(seed)  # Per multi-GPU
         
     # Rende le operazioni CUDA deterministiche
-    # NOTA: Può rallentare leggermente il training (~5-10%)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     
-    print(f"🎲 Seed fissato a: {seed}")
-    print("   ✅ Risultati saranno identici ad ogni esecuzione")
+    print(f"Seed fissato a: {seed}")
+    print("Risultati saranno identici ad ogni esecuzione")
     print()
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# CONFIGURAZIONE GLOBALE
-# ═══════════════════════════════════════════════════════════════════════════
 
+# CONFIGURAZIONE GLOBALE
 # Percorsi
 DATA_DIR = os.path.join(current_dir, '..', 'data')
 HISTORY_PATH = os.path.join(DATA_DIR, 'user_history.csv')
@@ -84,23 +50,22 @@ MODELS_DIR = os.path.join(DATA_DIR, 'trained_models')
 
 # Hyperparameters
 CONFIG = {
-    'seq_length': 20,      # Finestra temporale (20 canzoni → predici 21esima)
+    'seq_length': 20,      # Finestra temporale (20 canzoni --> predici 21esima)
     'batch_size': 16,      # Ridotto per dataset piccoli
     'test_split': 0.2,     # 20% per test
     'learning_rate': 0.001,
     'epochs': 50,          # Numero massimo di epoche
     'patience': 10,        # Early stopping
     'device': 'cuda' if torch.cuda.is_available() else 'cpu',
-    'seed': 42             # 🎲 SEED FISSO (cambialo se vuoi risultati diversi)
+    'seed': 42             
 }
 
 # Crea cartella per modelli salvati
 os.makedirs(MODELS_DIR, exist_ok=True)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
 # FUNZIONE: Training di un Modello
-# ═══════════════════════════════════════════════════════════════════════════
+
 
 def train_model(model, train_loader, test_loader, model_name, config):
     """
@@ -131,12 +96,10 @@ def train_model(model, train_loader, test_loader, model_name, config):
         'test_loss': []
     }
     
-    # ───────────────────────────────────────────────────────────────────────
-    # TRAINING LOOP
-    # ───────────────────────────────────────────────────────────────────────
-    
+
+    # TRAINING LOOP    
     for epoch in range(config['epochs']):
-        # FASE 1: TRAINING
+        # TRAINING
         model.train()
         train_losses = []
         
@@ -152,7 +115,7 @@ def train_model(model, train_loader, test_loader, model_name, config):
             optimizer.zero_grad()
             loss.backward()
             
-            # Gradient Clipping (evita esplosione gradienti)
+            # Gradient Clipping (evita che sballino i gradienti)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             
             optimizer.step()
@@ -161,7 +124,7 @@ def train_model(model, train_loader, test_loader, model_name, config):
         avg_train_loss = np.mean(train_losses)
         history['train_loss'].append(avg_train_loss)
         
-        # FASE 2: VALIDATION
+        #VALIDATION
         model.eval()
         test_losses = []
         
@@ -190,26 +153,23 @@ def train_model(model, train_loader, test_loader, model_name, config):
             # Salva checkpoint
             torch.save(model.state_dict(), 
                       os.path.join(MODELS_DIR, f'{model_name}_best.pth'))
-            print(" ✅ [BEST]")
+            print("[BEST]")
         else:
             patience_counter += 1
-            print(f" ⏳ [Patience: {patience_counter}/{config['patience']}]")
+            print(f"[Patience: {patience_counter}/{config['patience']}]")
             
             if patience_counter >= config['patience']:
-                print(f"\n⚠️ Early stopping attivato dopo {epoch+1} epoche")
+                print(f"\n Early stopping attivato dopo {epoch+1} epoche")
                 break
     
-    # ───────────────────────────────────────────────────────────────────────
     # VALUTAZIONE FINALE
-    # ───────────────────────────────────────────────────────────────────────
-    
     # Ricarica il miglior modello
     model.load_state_dict(torch.load(
         os.path.join(MODELS_DIR, f'{model_name}_best.pth'),
         weights_only=True
     ))
     
-    print(f"\n📊 Valutazione finale su Test Set...")
+    print(f"\n Valutazione finale su Test Set...")
     
     model.eval()
     all_predictions = []
@@ -236,8 +196,8 @@ def train_model(model, train_loader, test_loader, model_name, config):
     cosine_sims = cosine_similarity(all_predictions, all_targets, dim=1)
     avg_cosine = cosine_sims.mean().item()
     
-    print(f" ✅ MSE:               {mse:.6f}")
-    print(f" ✅ Cosine Similarity: {avg_cosine:.4f}")
+    print(f"  MSE:               {mse:.6f}")
+    print(f"  Cosine Similarity: {avg_cosine:.4f}")
     
     return {
         'model_name': model_name,
@@ -248,16 +208,10 @@ def train_model(model, train_loader, test_loader, model_name, config):
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# FUNZIONE: Stampa Tabella Comparativa
-# ═══════════════════════════════════════════════════════════════════════════
 
+#tabella con risultati
 def print_comparison_table(results_list, dataset_size):
-    """
-    Stampa tabella Markdown con risultati.
-    """
-    
-    print(f"\n📊 RISULTATI per Dataset {dataset_size} canzoni:\n")
+    print(f"\nRISULTATI per Dataset {dataset_size} canzoni:\n")
     
     print("="*70)
     print("TABELLA COMPARATIVA FINALE")
@@ -284,17 +238,15 @@ def print_comparison_table(results_list, dataset_size):
     print()
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# FUNZIONE: Stampa Tabella Multi-Dataset
-# ═══════════════════════════════════════════════════════════════════════════
 
+#Stampa Tabella Multi-Dataset
 def print_multi_dataset_table(all_experiments):
     """
     Stampa tabella comparativa su tutti i dataset testati.
     """
     
     print("\n" + "="*70)
-    print("📊 TABELLA COMPARATIVA FINALE - TUTTI I DATASET")
+    print("TABELLA COMPARATIVA FINALE - TUTTI I DATASET")
     print("="*70)
     print()
     
@@ -324,7 +276,7 @@ def print_multi_dataset_table(all_experiments):
         print(f"|{'-'*14}|{'-'*17}|{'-'*10}|{'-'*13}|{'-'*16}|")
     
     # Vincitori per ogni dataset
-    print("\n🏆 VINCITORI PER DATASET SIZE:\n")
+    print("\MIGLIORI MODELLI PER DATASET SIZE:\n")
     
     for size in sorted(by_size.keys()):
         experiments = by_size[size]
@@ -337,27 +289,18 @@ def print_multi_dataset_table(all_experiments):
         print()
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# MAIN: Esecuzione Esperimento
-# ═══════════════════════════════════════════════════════════════════════════
 
-def main():
-    """
-    Funzione principale: esegue esperimento su 3 dataset sizes.
-    """
+#Esecuzione Esperimento
+def main():    
     
-    # ═══════════════════════════════════════════════════════════════════════
-    # 🎲 PASSO 1: FISSA IL SEED (CRUCIALE!)
-    # ═══════════════════════════════════════════════════════════════════════
-    
+
+    #fissa il seed, cruciale
     set_seed(CONFIG['seed'])
     
-    # ═══════════════════════════════════════════════════════════════════════
-    # INTESTAZIONE
-    # ═══════════════════════════════════════════════════════════════════════
-    
+
+    # INTESTAZIONE    
     print("\n" + "="*70)
-    print("🎵 BILLIE AI-LISH - ESPERIMENTO COMPARATIVO MULTI-DATASET")
+    print("BILLIE AI-LISH - ESPERIMENTO COMPARATIVO MULTI-DATASET")
     print("="*70)
     print()
     
@@ -366,21 +309,15 @@ def main():
     
     all_experiments = []
     
-    # ═══════════════════════════════════════════════════════════════════════
-    # LOOP SU DATASET SIZES
-    # ═══════════════════════════════════════════════════════════════════════
-    
+    # LOOP SU DATASET SIZES    
     for dataset_size in DATASET_SIZES:
         
-        print("\n" + "🔷"*70)
+        print("\n")
         print(f"📊 ESPERIMENTO CON ULTIME {dataset_size} CANZONI")
-        print("🔷"*70 + "\n")
+        print("\n")
         
-        # ───────────────────────────────────────────────────────────────────
-        # STEP 1: Caricamento Dati
-        # ───────────────────────────────────────────────────────────────────
-        
-        print(f"📂 STEP 1: Caricamento ultime {dataset_size} canzoni")
+        #Caricamento dati
+        print(f"STEP 1: Caricamento ultime {dataset_size} canzoni")
         print("-" * 70)
         
         train_loader, test_loader, n_features = create_dataloaders(
@@ -391,21 +328,19 @@ def main():
             max_rows=dataset_size
         )
         
-        print(f"✅ Features per timestep: {n_features}")
-        print(f"✅ Device: {CONFIG['device']}")
+        print(f"Features per timestep: {n_features}")
+        print(f"Device: {CONFIG['device']}")
         print()
         
         # Train samples (per statistiche)
         train_samples = len(train_loader.dataset)
         
-        # ───────────────────────────────────────────────────────────────────
-        # STEP 2: Inizializzazione Modelli
-        # ───────────────────────────────────────────────────────────────────
-        
-        print("🧠 STEP 2: Inizializzazione Modelli")
+
+        # STEP 2: Inizializzazione Modelli        
+        print("STEP 2: Inizializzazione Modelli")
         print("-" * 70)
         
-        # 🎲 IMPORTANTE: Fissa seed PRIMA di creare ogni modello
+        # i seed vengono fissati ad ogni iterazione
         # Così i pesi iniziali sono identici ad ogni esecuzione
         set_seed(CONFIG['seed'])
         
@@ -417,21 +352,18 @@ def main():
         
         for name, model in models.items():
             params = sum(p.numel() for p in model.parameters())
-            print(f"✅ {name:<20} {params:>10,} parametri")
+            print(f"{name:<20} {params:>10,} parametri")
         
         print()
         
-        # ───────────────────────────────────────────────────────────────────
-        # STEP 3: Training
-        # ───────────────────────────────────────────────────────────────────
-        
-        print(f"🚀 STEP 3: Addestramento Modelli (Dataset: {dataset_size} canzoni)")
+        # Training
+        print(f"STEP 3: Addestramento Modelli (Dataset: {dataset_size} canzoni)")
         print("-" * 70)
         
         results_for_this_dataset = []
         
         for model_name, model in models.items():
-            # 🎲 Fissa seed prima di ogni training per consistenza
+            # Fissa seed prima di ogni training per consistenza
             set_seed(CONFIG['seed'])
             
             results = train_model(
@@ -450,22 +382,13 @@ def main():
             results_for_this_dataset.append(results)
             all_experiments.append(results)
         
-        # ───────────────────────────────────────────────────────────────────
-        # Tabella risultati per questo dataset
-        # ───────────────────────────────────────────────────────────────────
-        
+        # Tabella risultati per questo dataset        
         print_comparison_table(results_for_this_dataset, dataset_size)
     
-    # ═══════════════════════════════════════════════════════════════════════
-    # TABELLA FINALE MULTI-DATASET
-    # ═══════════════════════════════════════════════════════════════════════
-    
+    # TABELLA FINALE MULTI-DATASET    
     print_multi_dataset_table(all_experiments)
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # SALVATAGGIO DATI JSON PER DASHBOARD
-    # ═══════════════════════════════════════════════════════════════════════
-    
+    # SALVATAGGIO DATI JSON PER DASHBOARD    
     json_output_path = "dashboard_data.json"
     dashboard_data = []
 
@@ -494,13 +417,13 @@ def main():
     try:
         with open(json_output_path, "w") as f:
             json.dump(dashboard_data, f, indent=4)
-        print(f"\n💾 Dati salvati correttamente in: {os.path.abspath(json_output_path)}")
-        print("👉 Ora puoi eseguire: streamlit run dashboard.py")
+        print(f"\nDati salvati correttamente in: {os.path.abspath(json_output_path)}")
+        print("Ora puoi eseguire: streamlit run dashboard.py")
     except Exception as e:
-        print(f"\n❌ Errore nel salvataggio JSON: {e}")
+        print(f"\nErrore nel salvataggio JSON: {e}")
     
     print("\n" + "="*70)
-    print("✅ ESPERIMENTO COMPLETATO")
+    print("ESPERIMENTO COMPLETATO")
     print("="*70)
     print()
 
