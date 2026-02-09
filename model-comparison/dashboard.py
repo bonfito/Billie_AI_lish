@@ -5,24 +5,67 @@ import plotly.express as px
 import json
 import os
 
-# ==============================================================================
-# 1. CONFIGURAZIONE E STILE
-# ==============================================================================
+#CONFIGURAZIONE E STILE
+
 st.set_page_config(page_title="Billie AI-lish Results", page_icon="", layout="wide")
+
+#css
+st.markdown("""
+<style>
+    /* Colore Primario per Titoli e Metriche */
+    .css-10trblm { color: #1DB954; }
+    
+    /* --- TABS (La parte richiesta) --- */
+    /* 1. La barra sotto la tab selezionata */
+    div[data-baseweb="tab-highlight"] {
+        background-color: #1DB954 !important;
+    }
+    /* 2. Il testo della tab selezionata */
+    div[data-baseweb="tab-list"] button[aria-selected="true"] p {
+        color: #1DB954 !important;
+    }
+    div[data-baseweb="tab-list"] button[aria-selected="true"] {
+        color: #1DB954 !important;
+    }
+
+    /* --- SLIDER --- */
+    /* Il pallino (thumb) */
+    div.stSlider > div[data-baseweb="slider"] > div > div > div[role="slider"] {
+        background-color: #1DB954 !important;
+        box-shadow: rgb(29 185 84 / 20%) 0px 0px 0px 0.2rem !important;
+    }
+    /* La barra piena (track) */
+    div.stSlider > div[data-baseweb="slider"] > div > div > div > div {
+        background-color: #1DB954 !important;
+    }
+
+    /* --- BOTTONI --- */
+    .stButton>button {
+        background-color: #1DB954 !important;
+        color: white !important;
+        border: none;
+        border-radius: 20px;
+    }
+    .stButton>button:hover {
+        background-color: #1ed760 !important;
+        box-shadow: 0 4px 12px rgba(29, 185, 84, 0.4);
+    }
+    
+    /* --- CHECKBOX (Se presenti) --- */
+    div[data-baseweb="checkbox"] *[aria-checked="true"] {
+        background-color: #1DB954 !important;
+        border-color: #1DB954 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # File dati generato da run-experiment.py
 DATA_FILE = "dashboard_data.json"
 
-# Colori per i grafici (Coerenti con Streamlit default o custom)
-COLORS = {
-    "BillieMLP": "#FF6B6B",         # Rosso
-    "BillieLSTM": "#4ECDC4",        # Turchese
-    "BillieTransformer": "#FFD93D"  # Giallo
-}
 
-# ==============================================================================
-# 2. CARICAMENTO DATI
-# ==============================================================================
+
+#CARICAMENTO DATI
+
 def load_data():
     if not os.path.exists(DATA_FILE):
         return None
@@ -62,13 +105,11 @@ for entry in raw_data:
 
 df_summary = pd.DataFrame(summary_rows)
 
-# ==============================================================================
-# 3. INTERFACCIA DASHBOARD
-# ==============================================================================
+#INTERFACCIA DASHBOARD
 st.title(" Risultati Sperimentali: Billie AI-lish")
 st.markdown(f"**Sorgente Dati:** `{DATA_FILE}`")
 
-# --- METRICHE GLOBALI (Top Bar) ---
+#METRICHE GLOBALI
 if not df_summary.empty:
     best_mse_idx = df_summary["MSE (Test)"].idxmin()
     best_model_mse = df_summary.loc[best_mse_idx]
@@ -83,7 +124,7 @@ if not df_summary.empty:
 
 st.divider()
 
-# --- TABS PER DATASET ---
+#TABS PER DATASET
 # Ordina i dataset numericamente (50, 250, 500) invece che alfabeticamente
 datasets = sorted(df_summary["Dataset"].unique(), key=lambda x: int(x.split()[0]))
 tabs = st.tabs(datasets)
@@ -95,7 +136,7 @@ for i, ds_name in enumerate(datasets):
         # Filtra dati per questo tab
         subset = df_summary[df_summary["Dataset"] == ds_name].copy()
         
-        # 1. TABELLA CLASSIFICA
+        #TABELLA CLASSIFICA
         st.subheader(" Classifica Modelli")
         
         # Formattazione condizionale
@@ -103,13 +144,14 @@ for i, ds_name in enumerate(datasets):
             subset.style.highlight_min(subset=["MSE (Test)"], color="#1DB954")
                         .highlight_max(subset=["Cosine Similarity"], color="#1DB954")
                         .format({"MSE (Test)": "{:.6f}", "Cosine Similarity": "{:.4f}"}),
-            width='stretch',
+            width=None, # Streamlit deprecation fix
+            use_container_width=True,
             hide_index=True
         )
         
         st.divider()
         
-        # 2. DETTAGLIO ADDESTRAMENTO (Grafici e Tabelle affiancati)
+        #DETTAGLIO ADDESTRAMENTO (Grafici e Tabelle affiancati)
         st.subheader(" Curve di Apprendimento e Dati Epoca per Epoca")
         
         models = subset["Model"].unique()
@@ -120,7 +162,7 @@ for i, ds_name in enumerate(datasets):
             with cols[j]:
                 key = f"{ds_name}_{model}"
                 if key in history_data:
-                    df_hist = history_data[key]
+                    df_hist = history_data[key].copy()
                     
                     st.markdown(f"####  {model}")
                     
@@ -138,15 +180,29 @@ for i, ds_name in enumerate(datasets):
                         margin=dict(l=0, r=0, t=20, b=0),
                         yaxis_title="Loss (MSE)"
                     )
-                    st.plotly_chart(fig, width='stretch')
+                    st.plotly_chart(fig, use_container_width=True)
                     
-                    # TABELLA COMPLETA (Altezza Dinamica)
-                    # Calcolo approssimativo: 35px per header + 35px per riga
-                    # Questo evita la doppia barra di scorrimento
+                    #GRAFICO GAP GENERALIZZAZIONE
+                    if "Train Loss" in df_hist.columns and "Test Loss" in df_hist.columns:
+                        df_hist["Overfit Gap"] = df_hist["Test Loss"] - df_hist["Train Loss"]
+                        
+                        fig_gap = px.bar(
+                            df_hist, 
+                            x="Epoch", 
+                            y="Overfit Gap",
+                            height=150,
+                            title="Gap Overfitting (Test - Train)",
+                            color_discrete_sequence=["#1DB954"] # Grigio neutro per non rubare attenzione al verde
+                        )
+                        fig_gap.update_layout(
+                            margin=dict(l=0, r=0, t=30, b=0),
+                            yaxis_title="Gap"
+                        )
+                        st.plotly_chart(fig_gap, use_container_width=True)
+                    
+                    
                     row_height = 35
-                    table_height = (len(df_hist) + 1) * row_height
-                    # Tetto massimo di sicurezza (es. 1000px) se ci sono troppe epoche
-                    table_height = min(table_height, 1000)
+                    table_height = min((len(df_hist) + 1) * row_height, 1000)
                     
                     format_dict = {
                         "Epoch": "{:.0f}",
@@ -158,7 +214,7 @@ for i, ds_name in enumerate(datasets):
                         df_hist.style
                             .format(format_dict)
                             .highlight_min(subset=["Test Loss"], color="#1DB954", axis=0), 
-                        width='stretch', 
+                        use_container_width=True, 
                         height=table_height,
                         hide_index=True
                     )
