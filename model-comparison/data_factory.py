@@ -71,6 +71,7 @@ class MusicSequenceDataset(Dataset):
 def create_dataloaders(csv_path, seq_length=20, batch_size=32, test_split=0.2, max_rows=None):
     """
     Caricamento dati, pulizia e creazione DataLoader per training e test.
+    Gestisce l'overlap tra train e test per evitare il cold start (padding) nel test set.
     """
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"File non trovato: {csv_path}")
@@ -100,33 +101,38 @@ def create_dataloaders(csv_path, seq_length=20, batch_size=32, test_split=0.2, m
     data_matrix = df[AUDIO_FEATURES].values.astype(np.float32)
     total_samples = len(data_matrix)
 
-    # --- SPLIT CRONOLOGICO ---
-    # Dividiamo i dati puri PRIMA di creare i dataset.
+    # --- SPLIT CRONOLOGICO CON OVERLAP ---
     # Train: primi 80% dei dati
     # Test: ultimi 20% dei dati
+    
     test_size = int(total_samples * test_split)
     train_size = total_samples - test_size
 
+    # Il Train set si ferma al punto di taglio
     train_data = data_matrix[:train_size]
-    test_data = data_matrix[train_size:] 
     
-    # NOTA SUL TEST SET:
-    # Con la logica Growing Window, il primo elemento del Test Set guarderà indietro
-    # solo all'interno del buffer 'test_data'. Se volessimo che il test set "vedesse"
-    # anche la fine del training, dovremmo concatenare un pezzetto di train_data.
-    # Per semplicità e pulizia (evitare data leakage), qui teniamo i set separati.
-    # Se il test set è piccolo, le prime predizioni avranno molto padding (zeri).
+    # Il Test set inizia un po' prima ('seq_length' passi indietro) nel training
+    # per fornire il contesto storico alla prima canzone del test.
+    # Usiamo max(0, ...) per evitare indici negativi se il dataset è minuscolo.
+    start_test_idx = max(0, train_size - seq_length)
+    test_data = data_matrix[start_test_idx:] 
+    
+    # NOTA: 
+    # Ora 'test_data' contiene una piccola porzione finale di 'train_data'.
+    # Questo serve affinché la prima predizione del test abbia una "storia" reale
+    # invece di una serie di zeri (padding).
 
     # Creazione Dataset
     train_dataset = MusicSequenceDataset(train_data, seq_length)
     test_dataset = MusicSequenceDataset(test_data, seq_length)
 
     # Creazione DataLoader
-    # shuffle=True nel train per rompere le correlazioni tra batch consecutive e aiutare l'apprendimento
+    # shuffle=True nel train per rompere le correlazioni tra batch consecutive
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=False)
+    # shuffle=False nel test per mantenere l'ordine temporale per valutazioni o grafici
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-    print(f"Dataset creati (Growing Window):")
+    print(f"Dataset creati (Growing Window con Overlap):")
     print(f" - Train Samples: {len(train_dataset)} (da {len(train_data)} canzoni raw)")
     print(f" - Test Samples:  {len(test_dataset)} (da {len(test_data)} canzoni raw)")
 
@@ -142,15 +148,19 @@ if __name__ == "__main__":
         # Test con una finestra piccola per vedere il padding in azione
         tr, te, n = create_dataloaders(data_path, seq_length=5, batch_size=2, max_rows=10)
         
-        print("\n--- TEST BATCH ---")
+        print("\n--- TEST BATCH (TRAIN) ---")
         x, y = next(iter(tr)) # Prende il primo batch
 
         print(f"Shape Input (X): {x.shape} -> [Batch, Seq_Len, Features]")
         print(f"Shape Target (y): {y.shape} -> [Batch, Features]")
         
-        # Stampiamo il primo esempio per vedere se ci sono gli zeri (padding)
-        print("\nEsempio di Input (con potenziale Padding):")
-        print(x[0]) 
+        print("\n--- TEST BATCH (TEST - Verifica Overlap) ---")
+        x_test, y_test = next(iter(te))
+        print(f"Test Input Shape: {x_test.shape}")
+        # Se l'overlap funziona, x_test[0] non dovrebbe essere pieno di soli zeri 
+        # (a meno che le feature reali non siano 0, ma è raro per feature audio)
+        print("Primo input del Test Set (dovrebbe avere dati, non solo zeri):")
+        print(x_test[0])
 
     except Exception as e:
         print(f"Errore o file non trovato per il test rapido: {e}")
