@@ -28,6 +28,7 @@ def set_seed(seed=42):
     np.random.seed(seed)
     torch.manual_seed(seed)
     
+    #bloccate le casualità sia su gpu che cpu
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)  # Per multi-GPU
@@ -73,7 +74,7 @@ def train_model(model, train_loader, test_loader, model_name, config):
     """
     
     print(f"\n{'='*70}")
-    print(f"🚀 ADDESTRAMENTO: {model_name}")
+    print(f"ADDESTRAMENTO: {model_name}")
     print(f"{'='*70}")
     
     # Setup
@@ -313,7 +314,7 @@ def main():
     for dataset_size in DATASET_SIZES:
         
         print("\n")
-        print(f"📊 ESPERIMENTO CON ULTIME {dataset_size} CANZONI")
+        print(f"ESPERIMENTO CON ULTIME {dataset_size} CANZONI")
         print("\n")
         
         #Caricamento dati
