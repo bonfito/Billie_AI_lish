@@ -1,3 +1,4 @@
+
 import pandas as pd
 import numpy as np
 import torch
@@ -32,9 +33,18 @@ class LSTMRecommender:
     ):
         """
         Inizializza il recommender.
+        
+        Args:
+            model_path (str): Path al modello LSTM salvato (.pth)
+            tracks_db_path (str): Path al database canzoni (CSV con 2.8M tracks)
+            seq_length (int): Lunghezza finestra temporale (default: 20)
+            device (str): 'cpu' o 'cuda' (auto-detect se None)
         """
         
+        # ═══════════════════════════════════════════════════════════
         # CONFIGURAZIONE PATHS
+        # ═══════════════════════════════════════════════════════════
+        
         data_dir = os.path.join(current_dir, '..', 'data')
         models_dir = os.path.join(data_dir, 'trained_models')
         
@@ -68,7 +78,10 @@ class LSTMRecommender:
         
         self.tracks_db_path = tracks_db_path
         
+        # ═══════════════════════════════════════════════════════════
         # CONFIGURAZIONE MODELLO
+        # ═══════════════════════════════════════════════════════════
+        
         self.seq_length = seq_length
         self.audio_features = [
             'energy', 'valence', 'danceability', 'tempo', 'loudness',
@@ -82,11 +95,14 @@ class LSTMRecommender:
         else:
             self.device = torch.device(device)
         
-        print(f"LSTM Recommender Inizializzato")
-        print(f"Device: {self.device}")
-        print(f"Modello: {os.path.basename(self.model_path)}")
+        print(f"🎵 LSTM Recommender Inizializzato")
+        print(f"   Device: {self.device}")
+        print(f"   Modello: {os.path.basename(self.model_path)}")
         
+        # ═══════════════════════════════════════════════════════════
         # CARICAMENTO MODELLO LSTM
+        # ═══════════════════════════════════════════════════════════
+        
         self.model = BillieLSTM(
             input_size=self.n_features,
             hidden_size=128,
@@ -103,13 +119,16 @@ class LSTMRecommender:
             self.model.load_state_dict(state_dict)
             self.model.to(self.device)
             self.model.eval()  # Modalità inferenza
-            print(f"Modello caricato con successo")
+            print(f"   ✅ Modello caricato con successo")
         except Exception as e:
             raise RuntimeError(f"Errore caricamento modello: {e}")
         
+        # ═══════════════════════════════════════════════════════════
         # CARICAMENTO DATABASE CANZONI
-        print(f"Caricamento database canzoni...")
-        print(f"Path: {self.tracks_db_path}")
+        # ═══════════════════════════════════════════════════════════
+        
+        print(f"\n📂 Caricamento database canzoni...")
+        print(f"   Path: {self.tracks_db_path}")
         
         if not os.path.exists(self.tracks_db_path):
             raise FileNotFoundError(
@@ -136,8 +155,8 @@ class LSTMRecommender:
                               if f not in self.df_tracks.columns]
             
             if missing_features:
-                print(f"Feature mancanti: {missing_features}")
-                print(f"Imposto valori di default (0.5)")
+                print(f"   ⚠️  Feature mancanti: {missing_features}")
+                print(f"   Imposto valori di default (0.5)")
                 for feat in missing_features:
                     self.df_tracks[feat] = 0.5
             
@@ -153,22 +172,32 @@ class LSTMRecommender:
             norms[norms == 0] = 1e-10  # Evita divisione per zero
             self.audio_matrix_normalized = self.audio_matrix / norms
             
-            print(f"Database caricato: {len(self.df_tracks):,} canzoni")
-            print(f"Features: {', '.join(self.audio_features)}")
+            print(f"   ✅ Database caricato: {len(self.df_tracks):,} canzoni")
+            print(f"   Features: {', '.join(self.audio_features)}")
             
         except Exception as e:
             raise RuntimeError(f"Errore caricamento database: {e}")
     
     
+    # ═══════════════════════════════════════════════════════════════
     # PREDIZIONE CON LSTM
+    # ═══════════════════════════════════════════════════════════════
+    
     def predict_next_song(self, user_history_df):
         """
         Predice audio features della prossima canzone usando LSTM.
+        
+        Args:
+            user_history_df (pd.DataFrame): Storico ascolti utente
+                Deve contenere colonne: audio features (9 dimensioni)
+        
+        Returns:
+            np.array: Vettore predetto (9 dimensioni)
         """
         
         if user_history_df is None or user_history_df.empty:
-            # Nessuno storico -> Predizione neutra
-            print("Nessuno storico disponibile, predizione neutra")
+            # Nessuno storico → Predizione neutra
+            print("   ⚠️  Nessuno storico disponibile, predizione neutra")
             return np.array([0.5] * self.n_features)
         
         # Normalizza colonne
@@ -182,7 +211,7 @@ class LSTMRecommender:
         available_features = [f for f in self.audio_features if f in recent.columns]
         
         if not available_features:
-            print("Nessuna audio feature nello storico, predizione neutra")
+            print("   ⚠️  Nessuna audio feature nello storico, predizione neutra")
             return np.array([0.5] * self.n_features)
         
         # Crea sequenza input
@@ -219,7 +248,10 @@ class LSTMRecommender:
         return predicted_features
     
     
+    # ═══════════════════════════════════════════════════════════════
     # RACCOMANDAZIONE
+    # ═══════════════════════════════════════════════════════════════
+    
     def recommend(
         self,
         user_history_df,
@@ -229,22 +261,45 @@ class LSTMRecommender:
     ):
         """
         Genera raccomandazioni basate su predizione LSTM.
+        
+        Pipeline:
+        1. Predice prossima canzone con LSTM
+        2. Calcola similarità coseno con tutte le canzoni nel DB
+        3. Ordina per similarità decrescente
+        4. Filtra già ascoltate (opzionale)
+        5. Restituisce top K
+        
+        Args:
+            user_history_df (pd.DataFrame): Storico ascolti
+            k (int): Numero raccomandazioni (default: 20)
+            exclude_listened (bool): Esclude canzoni già ascoltate
+            session_blacklist (list): ID canzoni da escludere (questa sessione)
+        
+        Returns:
+            pd.DataFrame: Raccomandazioni con score di similarità
+            np.array: Audio features predette da LSTM
         """
         
         print("\n" + "="*70)
-        print("GENERAZIONE RACCOMANDAZIONI")
+        print("🎵 GENERAZIONE RACCOMANDAZIONI")
         print("="*70)
         
+        # ───────────────────────────────────────────────────────────
         # STEP 1: PREDIZIONE LSTM
-        print("\nSTEP 1: Predizione Audio Features con LSTM")
+        # ───────────────────────────────────────────────────────────
+        
+        print("\n📊 STEP 1: Predizione Audio Features con LSTM")
         predicted_features = self.predict_next_song(user_history_df)
         
-        print(f"Predizione completata:")
+        print(f"   Predizione completata:")
         for i, feat in enumerate(self.audio_features):
-            print(f"- {feat:15s}: {predicted_features[i]:.3f}")
+            print(f"   - {feat:15s}: {predicted_features[i]:.3f}")
         
+        # ───────────────────────────────────────────────────────────
         # STEP 2: CALCOLO SIMILARITÀ
-        print(f"\nSTEP 2: Calcolo Similarità con {len(self.df_tracks):,} canzoni")
+        # ───────────────────────────────────────────────────────────
+        
+        print(f"\n🔍 STEP 2: Calcolo Similarità con {len(self.df_tracks):,} canzoni")
         
         # Normalizza predizione
         pred_norm = predicted_features / (np.linalg.norm(predicted_features) + 1e-10)
@@ -259,11 +314,14 @@ class LSTMRecommender:
         pool = self.df_tracks.copy()
         pool['similarity_score'] = similarity_scores
         
-        print(f"Similarità massima: {similarity_scores.max():.4f}")
-        print(f"Similarità media:   {similarity_scores.mean():.4f}")
+        print(f"   Similarità massima: {similarity_scores.max():.4f}")
+        print(f"   Similarità media:   {similarity_scores.mean():.4f}")
         
+        # ───────────────────────────────────────────────────────────
         # STEP 3: FILTRI
-        print(f"\nSTEP 3: Applicazione Filtri")
+        # ───────────────────────────────────────────────────────────
+        
+        print(f"\n🚫 STEP 3: Applicazione Filtri")
         
         exclude_ids = set()
         
@@ -272,21 +330,24 @@ class LSTMRecommender:
             if 'id' in user_history_df.columns:
                 listened_ids = set(user_history_df['id'].dropna().unique())
                 exclude_ids.update(listened_ids)
-                print(f"- Escluse {len(listened_ids)} canzoni già ascoltate")
+                print(f"   - Escluse {len(listened_ids)} canzoni già ascoltate")
         
         # Filtro: Blacklist sessione
         if session_blacklist:
             exclude_ids.update(session_blacklist)
-            print(f"- Escluse {len(session_blacklist)} canzoni dalla blacklist")
+            print(f"   - Escluse {len(session_blacklist)} canzoni dalla blacklist")
         
         # Applica filtri
         if exclude_ids:
             pool = pool[~pool['id'].isin(exclude_ids)]
         
-        print(f"Pool finale: {len(pool):,} canzoni")
+        print(f"   Pool finale: {len(pool):,} canzoni")
         
+        # ───────────────────────────────────────────────────────────
         # STEP 4: SELEZIONE TOP K
-        print(f"\nSTEP 4: Selezione Top {k}")
+        # ───────────────────────────────────────────────────────────
+        
+        print(f"\n⭐ STEP 4: Selezione Top {k}")
         
         # Ordina per similarità decrescente
         pool = pool.sort_values('similarity_score', ascending=False)
@@ -305,11 +366,14 @@ class LSTMRecommender:
         # Reset index
         recommendations = recommendations.reset_index(drop=True)
         
+        # ───────────────────────────────────────────────────────────
         # STEP 5: OUTPUT
-        print(f"\nRaccomandazioni generate: {len(recommendations)}")
-        print("\n" + "-"*70)
+        # ───────────────────────────────────────────────────────────
+        
+        print(f"\n✅ Raccomandazioni generate: {len(recommendations)}")
+        print("\n" + "─"*70)
         print("TOP 10 RACCOMANDAZIONI:")
-        print("-"*70)
+        print("─"*70)
         
         display_cols = ['rank', 'name', 'artist', 'match_percentage']
         available_cols = [c for c in display_cols if c in recommendations.columns]
@@ -328,10 +392,21 @@ class LSTMRecommender:
         return recommendations, predicted_features
     
     
+    # ═══════════════════════════════════════════════════════════════
     # UTILITY: ANALISI PREDIZIONE
+    # ═══════════════════════════════════════════════════════════════
+    
     def analyze_prediction(self, user_history_df):
         """
         Analizza la predizione LSTM rispetto allo storico.
+        
+        Utile per debugging e comprensione del comportamento del modello.
+        
+        Args:
+            user_history_df (pd.DataFrame): Storico ascolti
+        
+        Returns:
+            dict: Statistiche predizione vs storico
         """
         
         predicted = self.predict_next_song(user_history_df)
@@ -361,59 +436,74 @@ class LSTMRecommender:
         }
 
 
+# ═══════════════════════════════════════════════════════════════════
 # ESEMPIO USO
+# ═══════════════════════════════════════════════════════════════════
+
 if __name__ == "__main__":
     
     print("\n" + "="*70)
     print("LSTM RECOMMENDER - TEST")
     print("="*70 + "\n")
     
+    # ───────────────────────────────────────────────────────────────
     # 1. INIZIALIZZAZIONE
+    # ───────────────────────────────────────────────────────────────
+    
     try:
         recommender = LSTMRecommender()
     except Exception as e:
-        print(f"Errore inizializzazione: {e}")
+        print(f"❌ Errore inizializzazione: {e}")
         sys.exit(1)
     
+    # ───────────────────────────────────────────────────────────────
     # 2. CARICAMENTO STORICO UTENTE
+    # ───────────────────────────────────────────────────────────────
+    
     data_dir = os.path.join(current_dir, '..', 'data')
     history_path = os.path.join(data_dir, 'user_history.csv')
     
     if os.path.exists(history_path):
-        print(f"Caricamento storico da: {history_path}")
+        print(f"📂 Caricamento storico da: {history_path}")
         user_history = pd.read_csv(history_path)
-        print(f"Caricate {len(user_history)} canzoni storiche\n")
+        print(f"   ✅ Caricate {len(user_history)} canzoni storiche\n")
     else:
-        print("Nessuno storico trovato, uso predizione neutra\n")
+        print("⚠️  Nessuno storico trovato, uso predizione neutra\n")
         user_history = pd.DataFrame()
     
+    # ───────────────────────────────────────────────────────────────
     # 3. GENERAZIONE RACCOMANDAZIONI
+    # ───────────────────────────────────────────────────────────────
+    
     recommendations, predicted = recommender.recommend(
         user_history_df=user_history,
         k=20,
         exclude_listened=True
     )
     
+    # ───────────────────────────────────────────────────────────────
     # 4. ANALISI PREDIZIONE
+    # ───────────────────────────────────────────────────────────────
+    
     if not user_history.empty:
-        print("\nANALISI PREDIZIONE:")
-        print("-"*70)
+        print("\n📊 ANALISI PREDIZIONE:")
+        print("─"*70)
         
         analysis = recommender.analyze_prediction(user_history)
         
         if analysis['history_mean'] is not None:
             print(f"{'Feature':<15} {'Media Storico':<15} {'Predizione':<15} {'Differenza':<15}")
-            print("-"*70)
+            print("─"*70)
             
             for i, feat in enumerate(analysis['feature_names']):
                 hist = analysis['history_mean'][i]
                 pred = analysis['predicted'][i]
                 diff = analysis['difference'][i]
                 
-                arrow = ">" if diff > 0 else "<" if diff < 0 else "="
+                arrow = "↑" if diff > 0 else "↓" if diff < 0 else "→"
                 
                 print(f"{feat:<15} {hist:>6.3f}         {pred:>6.3f}         {arrow} {abs(diff):>5.3f}")
         
         print("="*70)
     
-    print("\nTest completato!\n")
+    print("\n✅ Test completato!\n")

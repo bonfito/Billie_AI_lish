@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 import os
 
 # Vengono ignorati genere e popolarità, usiamo solo feature audio numeriche
@@ -30,12 +30,18 @@ class MusicSequenceDataset(Dataset):
     
     def __len__(self):
         # Con la Growing Window, possiamo predire dalla seconda canzone in poi.
+        # Quindi se abbiamo N canzoni, abbiamo N-1 esempi di training.
+        # Esempio: 50 canzoni -> 49 predizioni possibili.
         return max(0, len(self.data) - 1)
     
     def __getitem__(self, idx):
         """
         idx indica l'indice della canzone che vogliamo PREDIRE (il target).
         Poiché idx parte da 0, usiamo 'idx + 1' come indice reale nel dataset.
+        
+        Esempio:
+        idx=0 -> Vogliamo predire la canzone all'indice 1 (la seconda).
+                 Input sarà la canzone all'indice 0.
         """
         # Indice della canzone target (quella da predire)
         target_idx = idx + 1
@@ -64,28 +70,27 @@ class MusicSequenceDataset(Dataset):
 
 def create_dataloaders(csv_path, seq_length=20, batch_size=32, test_split=0.2, max_rows=None):
     """
-    Caricamento dati, pulizia e creazione Dataset per training e test.
-    
-    NOTA: Restituisce oggetti Dataset (non DataLoader). 
-    I DataLoader vanno creati nel main script per gestire correttamente i seed.
+    Caricamento dati, pulizia e creazione DataLoader per training e test.
+    Gestisce l'overlap tra train e test per evitare il cold start (padding) nel test set.
     """
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"File non trovato: {csv_path}")
     
-    print(f"[INFO] Database factory, caricamento: {csv_path}...")
+    print(f"Database factory, caricamento: {csv_path}...")
     df = pd.read_csv(csv_path)
 
     # Limitazione righe (opzionale, per test rapidi)
     if max_rows is not None:
+        original_len = len(df)
         df = df.tail(max_rows) # Prendi le ultime n righe (le più recenti)
-        print(f"[INFO] Limitato a ultime {max_rows} canzoni")
+        print(f"Limitato a ultime {max_rows} canzoni")
 
     # Ordinamento temporale (Cruciale: passato -> futuro)
     if 'played_at' in df.columns:
         df['played_at'] = pd.to_datetime(df['played_at'], format='mixed')
         df = df.sort_values('played_at').reset_index(drop=True)
     else:
-        print("[WARN] Colonna 'played_at' assente. Si assume che l'ordine nel CSV sia corretto.")
+        print("ATTENZIONE: Colonna 'played_at' assente. Si assume che l'ordine nel CSV sia corretto.")
 
     # Controllo colonne mancanti
     missing_cols = [c for c in AUDIO_FEATURES if c not in df.columns]
@@ -96,32 +101,42 @@ def create_dataloaders(csv_path, seq_length=20, batch_size=32, test_split=0.2, m
     data_matrix = df[AUDIO_FEATURES].values.astype(np.float32)
     total_samples = len(data_matrix)
 
-    # --- SPLIT CRONOLOGICO PURO (CLEAN SPLIT) ---
+    # --- SPLIT CRONOLOGICO CON OVERLAP ---
     # Train: primi 80% dei dati
     # Test: ultimi 20% dei dati
-    # Nessun overlap per garantire la validità scientifica del test.
     
     test_size = int(total_samples * test_split)
     train_size = total_samples - test_size
 
-    # Split dei dati grezzi
+    # Il Train set si ferma al punto di taglio
     train_data = data_matrix[:train_size]
-    test_data = data_matrix[train_size:] 
     
-    # Controllo dimensioni minime
-    if len(train_data) < 2 or len(test_data) < 2:
-        print(f"[WARN] Dataset troppo piccolo dopo lo split. Train: {len(train_data)}, Test: {len(test_data)}")
+    # Il Test set inizia un po' prima ('seq_length' passi indietro) nel training
+    # per fornire il contesto storico alla prima canzone del test.
+    # Usiamo max(0, ...) per evitare indici negativi se il dataset è minuscolo.
+    start_test_idx = max(0, train_size - seq_length)
+    test_data = data_matrix[start_test_idx:] 
+    
+    # NOTA: 
+    # Ora 'test_data' contiene una piccola porzione finale di 'train_data'.
+    # Questo serve affinché la prima predizione del test abbia una "storia" reale
+    # invece di una serie di zeri (padding).
 
     # Creazione Dataset
     train_dataset = MusicSequenceDataset(train_data, seq_length)
     test_dataset = MusicSequenceDataset(test_data, seq_length)
 
-    print(f"[INFO] Dataset creati (Split Sequenziale):")
+    # Creazione DataLoader
+    # shuffle=True nel train per rompere le correlazioni tra batch consecutive
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=False)
+    # shuffle=False nel test per mantenere l'ordine temporale per valutazioni o grafici
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+    print(f"Dataset creati (Growing Window con Overlap):")
     print(f" - Train Samples: {len(train_dataset)} (da {len(train_data)} canzoni raw)")
     print(f" - Test Samples:  {len(test_dataset)} (da {len(test_data)} canzoni raw)")
 
-    # Restituisce i dataset e il numero di feature
-    return train_dataset, test_dataset, len(AUDIO_FEATURES)
+    return train_loader, test_loader, len(AUDIO_FEATURES)
 
 if __name__ == "__main__":
     # Test rapido se eseguiamo direttamente questo file
@@ -131,26 +146,21 @@ if __name__ == "__main__":
 
     try:
         # Test con una finestra piccola per vedere il padding in azione
-        tr_ds, te_ds, n = create_dataloaders(data_path, seq_length=5, batch_size=2, max_rows=20)
+        tr, te, n = create_dataloaders(data_path, seq_length=5, batch_size=2, max_rows=10)
         
-        print("\n--- TEST DATASET (TRAIN) ---")
-        if len(tr_ds) > 0:
-            x, y = tr_ds[0]
-            print(f"Shape Input (X): {x.shape} -> [Seq_Len, Features]")
-            print(f"Shape Target (y): {y.shape} -> [Features]")
-        else:
-            print("Dataset Train vuoto.")
+        print("\n--- TEST BATCH (TRAIN) ---")
+        x, y = next(iter(tr)) # Prende il primo batch
+
+        print(f"Shape Input (X): {x.shape} -> [Batch, Seq_Len, Features]")
+        print(f"Shape Target (y): {y.shape} -> [Batch, Features]")
         
-        print("\n--- TEST DATASET (TEST) ---")
-        if len(te_ds) > 0:
-            x_test, y_test = te_ds[0]
-            print(f"Test Input Shape: {x_test.shape}")
-            # Verifica Padding: Poiché lo split è pulito, il primo elemento del test 
-            # non ha storia pregressa nel vettore test_data, quindi sarà quasi tutto padding (zeri).
-            print("Primo input del Test Set (Dovrebbe mostrare padding/zeri iniziali):")
-            print(x_test)
-        else:
-            print("Dataset Test vuoto.")
+        print("\n--- TEST BATCH (TEST - Verifica Overlap) ---")
+        x_test, y_test = next(iter(te))
+        print(f"Test Input Shape: {x_test.shape}")
+        # Se l'overlap funziona, x_test[0] non dovrebbe essere pieno di soli zeri 
+        # (a meno che le feature reali non siano 0, ma è raro per feature audio)
+        print("Primo input del Test Set (dovrebbe avere dati, non solo zeri):")
+        print(x_test[0])
 
     except Exception as e:
         print(f"Errore o file non trovato per il test rapido: {e}")
