@@ -182,23 +182,25 @@ for i, ds_name in enumerate(datasets):
                     )
                     st.plotly_chart(fig, use_container_width=True)
                     
+                    
                     #GRAFICO GAP GENERALIZZAZIONE
-                    if "Train Loss" in df_hist.columns and "Test Loss" in df_hist.columns:
-                        df_hist["Overfit Gap"] = df_hist["Test Loss"] - df_hist["Train Loss"]
+                    # if "Train Loss" in df_hist.columns and "Test Loss" in df_hist.columns:
+                    #     df_hist["Overfit Gap"] = df_hist["Test Loss"] - df_hist["Train Loss"]
                         
-                        fig_gap = px.bar(
-                            df_hist, 
-                            x="Epoch", 
-                            y="Overfit Gap",
-                            height=150,
-                            title="Gap Overfitting (Test - Train)",
-                            color_discrete_sequence=["#1DB954"] # Grigio neutro per non rubare attenzione al verde
-                        )
-                        fig_gap.update_layout(
-                            margin=dict(l=0, r=0, t=30, b=0),
-                            yaxis_title="Gap"
-                        )
-                        st.plotly_chart(fig_gap, use_container_width=True)
+                    #     fig_gap = px.bar(
+                    #         df_hist, 
+                    #         x="Epoch", 
+                    #         y="Overfit Gap",
+                    #         height=150,
+                    #         title="Gap Overfitting (Test - Train)",
+                    #         color_discrete_sequence=["#1DB954"] # Grigio neutro per non rubare attenzione al verde
+                    #     )
+                    #     fig_gap.update_layout(
+                    #         margin=dict(l=0, r=0, t=30, b=0),
+                    #         yaxis_title="Gap"
+                    #     )
+                    #     st.plotly_chart(fig_gap, use_container_width=True)
+                    
                     
                     
                     row_height = 35
